@@ -1,60 +1,152 @@
 import React from "react";
 
-const Hero = () => {
+const Footer = () => {
+  const currentYear = new Date().getFullYear();
+
   return (
-    // Slightly more compact section padding for a "smaller" feel
-    <section className="py-20 md:py-10 px-4 sm:px-6 lg:px-8 bg-linear-to-br from-blue-50 to-white ">
-      <div className="flex flex-col-reverse md:flex-row items-center justify-between max-w-6xl mx-auto gap-10">
-        {" "}
-        {/* max-w-6xl for a slightly more contained layout */}
-        {/* Left Side: Text and Call-to-Action - Enhanced for prominence */}
-        <div className="w-full md:w-1/2 space-y-5 text-center md:text-left animate-fadeInLeft z-10">
-          {" "}
-          {/* z-10 to ensure text overlays nicely */}
-          {/* Main Heading with a fresh, impactful gradient */}
-          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-extrabold leading-tight tracking-tight drop-shadow-sm">
-            Empowering Somali Students with{" "}
-            <span className="inline-block text-transparent bg-clip-text bg-linear-to-r from-blue-600 to-indigo-800 pb-1">
-              Alif Mentorship Hub
-            </span>
-          </h1>
-          {/* Subheading/Description with refined styling and emphasis */}
-          <p className="text-lg sm:text-xl text-gray-700 max-w-lg mx-auto md:mx-0 pt-2 font-light leading-relaxed">
-            **Discover your potential** through career guidance, mentorship programs, technology training, and access to higher education opportunities designed specifically for **Somali high school students**.
+    <footer className="bg-blue-100 bg-gradient-to-br from-blue-50 to-white text-gray-700 mt-20">
+      <div className="max-w-7xl mx-auto px-6 py-10 md:flex md:justify-between md:space-x-8">
+        {/* About Section */}
+        <div className="mb-8 md:mb-0 md:w-1/3">
+          <h2 className="text-xl font-semibold mb-4">Alif Mentorship Hub</h2>
+          <p className="text-sm mb-4">
+            Empowering Somali students to reach their full potential through
+            mentorship, education, and career guidance.
           </p>
-          {/* Call-to-Action Buttons - Slightly bolder appearance */}
-          <div className="flex justify-center md:justify-start gap-4 pt-6">
+          {/* Social Media Icons */}
+          <div className="flex space-x-4 mt-4">
+            {/* Facebook */}
             <a
-              href="/signup"
-              className="bg-blue-600 text-white font-bold px-8 py-3.5 rounded-full shadow-xl hover:bg-blue-700 transition transform hover:-translate-y-1 focus:outline-none focus:ring-4 focus:ring-blue-400 focus:ring-opacity-60 text-lg"
-              aria-label="Join the mentorship program"
+              href="#"
+              className="p-2 rounded-full hover:bg-blue-300 transition"
+              aria-label="Facebook"
             >
-              Join Mentorship Program
+              <svg
+                className="w-5 h-5"
+                fill="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path d="M22 12c0-5.522-4.478-10-10-10S2 6.478 2 12c0 4.991 3.657 9.128 8.438 9.878v-6.987H13v-2.89h-4.562V9.797c0-4.523 2.675-7.007 6.773-7.007 1.954 0 4.005.351 4.005.351v4.414h-2.257c-2.227 0-2.92 1.382-2.92 2.798v3.364H19v-4.34c0-4.478-2.582-6.927-6.256-6.927-1.709 0-3.473.292-3.473.292v4.062h1.963v2.89H9.827V21.878C14.543 21.128 18 16.991 18 12z" />
+              </svg>
             </a>
+            {/* Twitter */}
             <a
-              href="#programs"
-              className="border-2 border-blue-600 text-blue-600 font-semibold px-8 py-3.5 rounded-full hover:bg-blue-50 transition transform hover:shadow-lg focus:outline-none focus:ring-4 focus:ring-blue-400 focus:ring-opacity-60 text-lg"
-              aria-label="Learn about our programs"
+              href="#"
+              className="p-2 rounded-full hover:bg-blue-300 transition"
+              aria-label="Twitter"
             >
-              Explore Programs &rarr;
+              <svg
+                className="w-5 h-5"
+                fill="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path d="M23 3a10.9 10.9 0 01-3.14.86 4.48 4.48 0 002-2.48 9.02 9.02 0 01-2.86 1.09 4.52 4.52 0 00-7.7 4.13A12.94 12.94 0 013 4.15a4.52 4.52 0 001.39 6.04A4.52 4.52 0 012 9.13v.05a4.52 4.52 0 003.63 4.43 4.52 4.52 0 01-2.05.08 4.52 4.52 0 004.2 3.13A9.04 9.04 0 012 19.54a12.91 12.91 0 006.99 2.05c8.39 0 12.97-6.94 12.97-12.94 0-.2-.01-.39-.02-.58A9.3 9.3 0 0023 3z" />
+              </svg>
+            </a>
+            {/* Instagram */}
+            <a
+              href="#"
+              className="p-2 rounded-full hover:bg-pink-300 transition"
+              aria-label="Instagram"
+            >
+              <svg
+                className="w-5 h-5"
+                fill="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path d="M12 2.163c3.204 0 3.584.012 4.85.07 1.17.055 1.97.24 2.43.404a4.92 4.92 0 011.775 1.124 4.92 4.92 0 011.124 1.775c.164.46.349 1.26.404 2.43.058 1.266.07 1.646.07 4.85s-.012 3.584-.07 4.85c-.055 1.17-.24 1.97-.404 2.43a4.92 4.92 0 01-1.124 1.775 4.92 4.92 0 01-1.775 1.124c-.46.164-1.26.349-2.43.404-1.266.058-1.646.07-4.85.07s-3.584-.012-4.85-.07c-1.17-.055-1.97-.24-2.43-.404a4.92 4.92 0 01-1.775-1.124 4.92 4.92 0 01-1.124-1.775c-.164-.46-.349-1.26-.404-2.43-.058-1.266-.07-1.646-.07-4.85s.012-3.584.07-4.85c.055-1.17.24-1.97.404-2.43a4.92 4.92 0 011.124-1.775 4.92 4.92 0 011.775-1.124c.46-.164 1.26-.349 2.43-.404 1.266-.058 1.646-.07 4.85-.07zm0-2.163C8.736 0 8.332.012 7.052.07 5.782.128 4.767.31 3.94.582a6.998 6.998 0 00-2.542 1.548A6.998 6.998 0 00.582 4.07c-.272.827-.454 1.842-.512 3.112C0 8.736 0 9.14 0 12s.012 3.264.07 4.944c.058 1.27.24 2.285.512 3.112a6.998 6.998 0 001.548 2.542 6.998 6.998 0 002.542 1.548c.827.272 1.842.454 3.112.512C8.736 24 9.14 24 12 24s3.264-.012 4.944-.07c1.27-.058 2.285-.24 3.112-.512a6.998 6.998 0 002.542-1.548 6.998 6.998 0 001.548-2.542c.272-.827.454-1.842.512-3.112.058-1.68.07-2.084.07-4.944s-.012-3.264-.07-4.944c-.058-1.27-.24-2.285-.512-3.112a6.998 6.998 0 00-1.548-2.542 6.998 6.998 0 00-2.542-1.548c-.827-.272-1.842-.454-3.112-.512C15.264.012 14.86 0 12 0z" />
+                <path d="M12 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zm0 10.162a3.999 3.999 0 110-7.998 3.999 3.999 0 010 7.998zM20.49 4.509a1.44 1.44 0 11-2.88 0 1.44 1.44 0 012.88 0z" />
+              </svg>
+            </a>
+            {/* TikTok */}
+            <a
+              href="#"
+              className="p-2 rounded-full hover:bg-black transition"
+              aria-label="TikTok"
+            >
+              <svg
+                className="w-5 h-5"
+                fill="currentColor"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+              >
+                <path d="M12 2c-1.105 0-2 .895-2 2v4.91A4.09 4.09 0 008 12v4a4.09 4.09 0 004 4 4.09 4.09 0 004-4v-5a4.09 4.09 0 00-4-4V4c0-1.105-.895-2-2-2zm0 2c.552 0 1 .448 1 1v4c0 .552-.448 1-1 1s-1-.448-1-1V5c0-.552.448-1 1-1zm0 8c.552 0 1 .448 1 1v4c0 .552-.448 1-1 1s-1-.448-1-1v-4c0-.552.448-1 1-1z" />
+              </svg>
             </a>
           </div>
         </div>
-        {/* Right Side: Image with adjusted size and effects */}
-        <div className="w-full md:w-1/2 flex justify-center md:justify-end mt-8 md:mt-0 animate-fadeInRight relative">
-          <img
-            src="/heroimage.png"
-            alt="Somali students learning and collaborating, representing the Alif Mentorship Hub's mission to empower youth"
-            // Smaller max-w for the image, focused, and maintaining good aspect ratio
-            className="w-full max-w-sm lg:max-w-md h-auto object-contain rounded-full shadow-2xl transition-transform duration-700 hover:scale-105 z-0 transform translate-x-4 md:translate-x-8" // Added translate-x for subtle offset
-            loading="eager"
-          />
-          {/* Subtle blurred background element behind the image */}
-          <div className="absolute inset-0 bg-blue-200 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-pulse-slow"></div>
+
+        {/* Quick Links */}
+        <div className="mb-8 md:mb-0 md:w-1/3">
+          <h3 className="text-lg font-semibold mb-4">Quick Links</h3>
+          <ul className="space-y-2 text-sm">
+            <li>
+              <a
+                href="/"
+                className="hover:underline hover:text-gray-900 transition"
+              >
+                Home
+              </a>
+            </li>
+            <li>
+              <a
+                href="/about"
+                className="hover:underline hover:text-gray-900 transition"
+              >
+                About
+              </a>
+            </li>
+            <li>
+              <a
+                href="/programs"
+                className="hover:underline hover:text-gray-900 transition"
+              >
+                Programs
+              </a>
+            </li>
+            <li>
+              <a
+                href="/contact"
+                className="hover:underline hover:text-gray-900 transition"
+              >
+                Contact
+              </a>
+            </li>
+            <li>
+              <a
+                href="/privacy"
+                className="hover:underline hover:text-gray-900 transition"
+              >
+                Privacy Policy
+              </a>
+            </li>
+          </ul>
+        </div>
+
+        {/* Contact Info */}
+        <div className="md:w-1/3">
+          <h3 className="text-lg font-semibold mb-4">Contact Us</h3>
+          <p className="text-sm mb-2">
+            <strong>Address:</strong> 123 Somali Street, Mogadishu
+          </p>
+          <p className="text-sm mb-2">
+            <strong>Phone:</strong> +252 61 234 5678
+          </p>
+          <p className="text-sm mb-2">
+            <strong>Email:</strong> info@alifmentorship.org
+          </p>
         </div>
       </div>
-    </section>
+
+      {/* Bottom Bar */}
+      <div className="border-t border-gray-300 mt-8 pt-4 text-center text-gray-600 text-sm">
+        © {currentYear} Alif Mentorship Hub. All rights reserved.
+      </div>
+    </footer>
   );
 };
 
-export default Hero;
+export default Footer;

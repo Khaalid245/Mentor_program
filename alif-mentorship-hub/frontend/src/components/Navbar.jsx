@@ -13,7 +13,7 @@ const Navbar = () => {
     location.pathname.includes(path)
   );
 
-  // Check auth state from localStorage or other logic
+  // Keep track of auth state from localStorage
   useEffect(() => {
     const checkAuth = () => {
       setIsAuthenticated(!!localStorage.getItem("access_token"));
@@ -47,7 +47,7 @@ const Navbar = () => {
           </h1>
         </Link>
 
-        {/* Desktop Links */}
+        {/* Desktop Links - always show Login and Signup for easy access */}
         <div className="hidden md:flex space-x-8 items-center">
           <Link to="/" className="hover:text-blue-600 transition">
             Home
@@ -58,32 +58,27 @@ const Navbar = () => {
           <Link to="/contact" className="hover:text-blue-600 transition">
             Contact
           </Link>
-          {!isAuthenticated ? (
-            <>
-              <Link
-                to="/login"
-                className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
-              >
-                Login
-              </Link>
-              <Link
-                to="/signup"
-                className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition"
-              >
-                Signup
-              </Link>
-            </>
-          ) : (
-            <>
-              {isDashboardPage && (
-                <button
-                  onClick={handleSignOut}
-                  className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition"
-                >
-                  Sign Out
-                </button>
-              )}
-            </>
+          {/* Always show Login and Signup regardless of auth */}
+          <Link
+            to="/login"
+            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+          >
+            Login
+          </Link>
+          <Link
+            to="/signup"
+            className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition"
+          >
+            Signup
+          </Link>
+          {/* Show Sign Out button if user is on dashboard */}
+          {isDashboardPage && isAuthenticated && (
+            <button
+              onClick={handleSignOut}
+              className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition"
+            >
+              Sign Out
+            </button>
           )}
         </div>
 
@@ -145,7 +140,7 @@ const Navbar = () => {
             >
               {/* Menu content */}
               <div className="p-6 flex flex-col space-y-4 h-full overflow-y-auto">
-                {/* Links (same as desktop) */}
+                {/* Links */}
                 <Link
                   to="/"
                   className="text-gray-700 hover:text-blue-600 transition"
@@ -167,37 +162,36 @@ const Navbar = () => {
                 >
                   Contact
                 </Link>
-                {!isAuthenticated ? (
-                  <>
-                    <Link
-                      to="/login"
-                      className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
-                      onClick={() => setMenuOpen(false)}
-                    >
-                      Login
-                    </Link>
-                    <Link
-                      to="/signup"
-                      className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition"
-                      onClick={() => setMenuOpen(false)}
-                    >
-                      Signup
-                    </Link>
-                  </>
-                ) : (
-                  <>
-                    {isDashboardPage && (
-                      <button
-                        onClick={() => {
-                          handleSignOut();
-                          setMenuOpen(false);
-                        }}
-                        className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition"
-                      >
-                        Sign Out
-                      </button>
-                    )}
-                  </>
+                {/* Always show Login and Signup for mobile */}
+                <Link
+                  to="/login"
+                  className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+                  onClick={() => {
+                    setMenuOpen(false);
+                  }}
+                >
+                  Login
+                </Link>
+                <Link
+                  to="/signup"
+                  className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition"
+                  onClick={() => {
+                    setMenuOpen(false);
+                  }}
+                >
+                  Signup
+                </Link>
+                {/* Sign Out button for mobile if on dashboard */}
+                {isDashboardPage && isAuthenticated && (
+                  <button
+                    onClick={() => {
+                      handleSignOut();
+                      setMenuOpen(false);
+                    }}
+                    className="bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition"
+                  >
+                    Sign Out
+                  </button>
                 )}
               </div>
             </motion.div>
