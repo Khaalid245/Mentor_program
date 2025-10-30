@@ -1,0 +1,59 @@
+{
+  "name": "alif-mentorship-hub",
+  "version": "1.0.0",
+  "description": "A comprehensive mentorship and learning platform designed to empower Somali high school students",
+  "main": "index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && python manage.py runserver",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build": "cd frontend && npm run build",
+    "install:all": "npm run install:frontend && npm run install:backend",
+    "install:frontend": "cd frontend && npm install",
+    "install:backend": "cd backend && pip install -r requirements.txt",
+    "test": "npm run test:frontend && npm run test:backend",
+    "test:frontend": "cd frontend && npm run test",
+    "test:backend": "cd backend && python manage.py test",
+    "lint": "npm run lint:frontend",
+    "lint:frontend": "cd frontend && npm run lint",
+    "format": "npm run format:frontend",
+    "format:frontend": "cd frontend && npm run format",
+    "clean": "npm run clean:frontend && npm run clean:backend",
+    "clean:frontend": "cd frontend && rm -rf node_modules dist",
+    "clean:backend": "cd backend && find . -type d -name __pycache__ -delete && find . -type f -name '*.pyc' -delete",
+    "setup": "npm run install:all && npm run setup:backend",
+    "setup:backend": "cd backend && python manage.py migrate && python manage.py collectstatic --noinput"
+  },
+  "keywords": [
+    "mentorship",
+    "education",
+    "somali-students",
+    "career-guidance",
+    "technology-training",
+    "django",
+    "react",
+    "tailwindcss"
+  ],
+  "author": "Alif Mentorship Hub Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alif-mentorship-hub/alif-mentorship-hub.git"
+  },
+  "bugs": {
+    "url": "https://github.com/alif-mentorship-hub/alif-mentorship-hub/issues"
+  },
+  "homepage": "https://github.com/alif-mentorship-hub/alif-mentorship-hub#readme",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0",
+    "python": ">=3.8.0"
+  },
+  "workspaces": [
+    "frontend"
+  ]
+}
+
