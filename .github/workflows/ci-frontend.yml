@@ -20,16 +20,13 @@ jobs:
           node-version: "18"
 
       - name: Install dependencies
-        run: |
-          cd alif-mentorship-hub/frontend
-          npm install
+        working-directory: alif-mentorship-hub/frontend
+        run: npm install
 
       - name: Build the React app
-        run: |
-          cd alif-mentorship-hub/frontend
-          npm run build
+        working-directory: alif-mentorship-hub/frontend
+        run: npm run build
 
       - name: Run tests
-        run: |
-          cd alif-mentorship-hub/frontend
-          npm test -- --watchAll=false
+        working-directory: alif-mentorship-hub/frontend
+        run: npm test -- --watchAll=false
