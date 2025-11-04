@@ -12,24 +12,24 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "18"
 
       - name: Install dependencies
         run: |
-          cd frontend
+          cd alif-mentorship-hub/frontend
           npm install
 
-      - name: Run build
+      - name: Build the React app
         run: |
-          cd frontend
+          cd alif-mentorship-hub/frontend
           npm run build
 
       - name: Run tests
         run: |
-          cd frontend
+          cd alif-mentorship-hub/frontend
           npm test -- --watchAll=false
