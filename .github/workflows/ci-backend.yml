@@ -1,4 +1,4 @@
-name: Backend CI
+name: Backend CI (Dockerized)
 
 on:
   push:
@@ -24,35 +24,23 @@ jobs:
           --health-timeout=5s
           --health-retries=3
 
-    env:
-      DATABASE_URL: mysql://root:root@127.0.0.1:3306/test_db
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Install dependencies
-        working-directory: alif-mentorship-hub/backend
+      - name: Build Docker image for backend
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          cd backend
+          docker build -t alif-backend .
 
-      - name: Wait for MySQL to be ready
+      - name: Run Docker container for backend
         run: |
-          until mysqladmin ping -h127.0.0.1 --silent; do
-            echo "Waiting for database..."
-            sleep 3
-          done
+          docker run -d -p 8000:8000 alif-backend
+          sleep 10  # Wait a few seconds for Django to start
 
-      - name: Run migrations
-        working-directory: alif-mentorship-hub/backend
-        run: python manage.py migrate
+      - name: Check running containers
+        run: docker ps
 
-      - name: Run tests
-        working-directory: alif-mentorship-hub/backend
-        run: python manage.py test
+      - name: Run Django tests inside container
+        run: |
+          docker exec $(docker ps -q --filter ancestor=alif-backend) python manage.py test
