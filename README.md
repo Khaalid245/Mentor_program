@@ -58,7 +58,7 @@ Primary users are Somali high school students (ages 15-20), especially from unde
 1. Clone the repository
 
 ```bash
-git clone https://github.com/Belinda1704/alif-hub-devops-group2.git
+git clone https://github.com/Khaalid245/Mentor_program.git
 cd alif-hub
 ```
 
@@ -136,9 +136,9 @@ alif-hub-devops-group2/
 
 ## Links
 
-- [GitHub Repository](https://github.com/Belinda1704/alif-hub-devops-group2)
-- [Project Board](https://github.com/Belinda1704/alif-hub-devops-group2/projects)
-- [Issues](https://github.com/Belinda1704/alif-hub-devops-group2/issues)
+- [GitHub Repository](https://github.com/Khaalid245/Mentor_program.git)
+- [Project Board](https://github.com/Khaalid245/Mentor_program.git)
+- [Issues](https://github.com/Khaalid245/Mentor_program.git)
 
 ## License
 
