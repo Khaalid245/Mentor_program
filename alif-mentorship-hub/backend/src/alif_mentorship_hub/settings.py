@@ -4,19 +4,22 @@ from dotenv import load_dotenv
 from pathlib import Path
 from datetime import timedelta
 
-# Load environment variables
-load_dotenv()
-
-# Add src directory to Python path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
 # Base directory
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
+# Add src directory to Python path
+sys.path.insert(0, str(BASE_DIR / "src"))
+
+# Load correct environment file (ONLY this, nothing else)
+if os.getenv("RUNNING_IN_DOCKER") == "true":
+    load_dotenv(BASE_DIR / ".env")        # Used inside Docker
+else:
+    load_dotenv(BASE_DIR / ".env.local")  # Used on your local machine
+
 # Security
-SECRET_KEY = os.getenv('SECRET_KEY', 'fallback-secret-key')
-DEBUG = os.getenv('DEBUG', 'True') == 'True'
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+SECRET_KEY = os.getenv("SECRET_KEY", "fallback-secret-key")
+DEBUG = os.getenv("DEBUG", "True") == "True"
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
 
 # Installed apps
 INSTALLED_APPS = [
@@ -68,11 +71,11 @@ WSGI_APPLICATION = 'src.alif_mentorship_hub.wsgi.application'
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.getenv('DB_NAME', 'mentorship_db'),
-        'USER': os.getenv('DB_USER', 'root'),
-        'PASSWORD': os.getenv('DB_PASSWORD', ''),
-        'HOST': os.getenv('DB_HOST', 'localhost'),
-        'PORT': os.getenv('DB_PORT', '3306'),
+        'NAME': os.getenv("DB_NAME", "mentorship_db"),
+        'USER': os.getenv("DB_USER", "root"),
+        'PASSWORD': os.getenv("DB_PASSWORD", ""),
+        'HOST': os.getenv("DB_HOST", "db"),
+        'PORT': os.getenv("DB_PORT", "3306"),
         'OPTIONS': {
             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
         },
@@ -101,7 +104,7 @@ MEDIA_ROOT = BASE_DIR / 'media'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-# Django REST framework
+# DRF
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
@@ -111,7 +114,7 @@ REST_FRAMEWORK = {
     ),
 }
 
-# JWT settings
+# JWT
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
@@ -124,17 +127,6 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
 ]
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOW_HEADERS = [
-    'accept',
-    'accept-encoding',
-    'authorization',
-    'content-type',
-    'dnt',
-    'origin',
-    'user-agent',
-    'x-csrftoken',
-    'x-requested-with',
-]
 
 # CSRF
 CSRF_TRUSTED_ORIGINS = [
