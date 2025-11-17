@@ -30,17 +30,17 @@ jobs:
 
       - name: Build Docker image for backend
         run: |
-          cd backend
+          cd alif-mentorship-hub/backend
           docker build -t alif-backend .
 
-      - name: Run Docker container for backend
+      - name: Run backend container
         run: |
-          docker run -d -p 8000:8000 alif-backend
-          sleep 10  # Wait a few seconds for Django to start
+          docker run -d -p 8000:8000 --name backend_test alif-backend
+          sleep 10  # wait for Django to start
 
       - name: Check running containers
         run: docker ps
 
-      - name: Run Django tests inside container
+      - name: Run Django tests inside the container
         run: |
-          docker exec $(docker ps -q --filter ancestor=alif-backend) python manage.py test
+          docker exec backend_test python manage.py test
