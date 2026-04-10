@@ -1,100 +1,139 @@
 import { useState } from "react";
 import api from "../services/axios";
 
+// Fields sent must exactly match StudentApplication model fields
+const INITIAL_FORM = {
+  // Personal info
+  first_name: "",
+  last_name: "",
+  dob: "",
+  gender: "",
+  phone: "",
+  email: "",
+  address: "",
+  national_id: "",
+  // Academic info
+  previous_school: "",
+  previous_grade: "",
+  gpa: "",
+  course: "",
+  // Career guidance (saved to model)
+  mentorship_interest: "",
+  career_goals: "",
+  why_mentorship: "",
+  // Documents
+  certificate: null,
+  transcript: null,
+  passport_photo: null,
+  recommendation_letter: null, // optional — blank=True, null=True on model
+};
+
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+const FILE_FIELDS = ["certificate", "transcript", "passport_photo", "recommendation_letter"];
+
 const ApplicationForm = ({ onSuccess }) => {
-  const [form, setForm] = useState({
-    first_name: "",
-    last_name: "",
-    dob: "",
-    gender: "",
-    phone: "",
-    email: "",
-    address: "",
-    national_id: "",
-    previous_school: "",
-    previous_grade: "",
-    gpa: "",
-    course: "",
-    mentorship_interest: "", // New field
-    career_goals: "", // New field
-    why_mentorship: "", // New field
-    certificate: null,
-    transcript: null,
-    passport_photo: null,
-    recommendation_letter: null,
-  });
+  const [form, setForm] = useState(INITIAL_FORM);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
   const handleChange = (e) => {
     const { name, value, files } = e.target;
     if (files) {
-      setForm({ ...form, [name]: files[0] });
+      const file = files[0];
+      if (file && file.size > MAX_FILE_SIZE) {
+        setError(`"${file.name}" exceeds the 5MB limit. Please compress or choose a smaller file.`);
+        e.target.value = ""; // reset the input
+        return;
+      }
+      setError("");
+      setForm((prev) => ({ ...prev, [name]: file }));
     } else {
-      setForm({ ...form, [name]: value });
+      setForm((prev) => ({ ...prev, [name]: value }));
     }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setError("");
+    setSubmitting(true);
+
     try {
       const formData = new FormData();
-      Object.keys(form).forEach((key) => {
-        if (form[key] !== null && form[key] !== '') formData.append(key, form[key]);
+      Object.entries(form).forEach(([key, value]) => {
+        // Skip null/empty values — don't send empty strings for optional file fields
+        if (value !== null && value !== "") {
+          formData.append(key, value);
+        }
       });
 
       await api.post("student/applications/", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
-      alert("Mentorship application submitted successfully!");
       onSuccess(); // refresh dashboard
     } catch (err) {
       console.error(err.response?.data || err);
-      alert("Failed to submit application");
+      const detail = err.response?.data
+        ? JSON.stringify(err.response.data)
+        : "Failed to submit. Please check your details and try again.";
+      setError(detail);
+    } finally {
+      setSubmitting(false);
     }
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6 border-2 border-blue-200 rounded-xl p-6 bg-white">
-      <h2 className="text-2xl font-bold text-blue-600 mb-4">Mentorship Program Application</h2>
-      <p className="text-gray-600 mb-6">
-        Join Alif Mentorship Hub to access career guidance, mentorship programs, technology training, 
-        and community events designed to support Somali high school students.
-      </p>
+    <form onSubmit={handleSubmit} className="space-y-6">
+      <div>
+        <h2 className="text-2xl font-bold text-blue-600">
+          Mentorship Program Application
+        </h2>
+        <p className="text-gray-500 text-sm mt-1">
+          Fields marked * are required.
+        </p>
+      </div>
 
-      {/* Personal Information Section */}
-      <div className="bg-blue-50 p-4 rounded-lg">
-        <h3 className="text-lg font-semibold mb-3 text-blue-800">Personal Information</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* Inline error */}
+      {error && (
+        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* ── Personal Information ─────────────────────────────── */}
+      <section className="bg-blue-50 p-4 rounded-lg space-y-3">
+        <h3 className="font-semibold text-blue-800">Personal Information</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <input
             name="first_name"
             placeholder="First Name *"
             value={form.first_name}
             onChange={handleChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             required
+            className="input"
           />
           <input
             name="last_name"
             placeholder="Last Name *"
             value={form.last_name}
             onChange={handleChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             required
+            className="input"
           />
           <input
             type="date"
             name="dob"
             value={form.dob}
             onChange={handleChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             required
+            className="input"
           />
           <select
             name="gender"
             value={form.gender}
             onChange={handleChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             required
+            className="input"
           >
             <option value="">Select Gender *</option>
             <option value="Male">Male</option>
@@ -106,8 +145,8 @@ const ApplicationForm = ({ onSuccess }) => {
             placeholder="Phone Number *"
             value={form.phone}
             onChange={handleChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             required
+            className="input"
           />
           <input
             type="email"
@@ -115,69 +154,65 @@ const ApplicationForm = ({ onSuccess }) => {
             placeholder="Email Address *"
             value={form.email}
             onChange={handleChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             required
+            className="input"
           />
-        </div>
-        <div className="mt-4">
-          <input
-            name="address"
-            placeholder="Address *"
-            value={form.address}
-            onChange={handleChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-            required
-          />
-        </div>
-        <div className="mt-4">
           <input
             name="national_id"
             placeholder="National ID / Student ID *"
             value={form.national_id}
             onChange={handleChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
             required
+            className="input md:col-span-2"
+          />
+          <input
+            name="address"
+            placeholder="Address *"
+            value={form.address}
+            onChange={handleChange}
+            required
+            className="input md:col-span-2"
           />
         </div>
-      </div>
+      </section>
 
-      {/* Academic Information */}
-      <div className="bg-purple-50 p-4 rounded-lg">
-        <h3 className="text-lg font-semibold mb-3 text-purple-800">Academic Information</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* ── Academic Information ─────────────────────────────── */}
+      <section className="bg-purple-50 p-4 rounded-lg space-y-3">
+        <h3 className="font-semibold text-purple-800">Academic Information</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <input
             name="previous_school"
-            placeholder="Current/Previous School *"
+            placeholder="Current / Previous School *"
             value={form.previous_school}
             onChange={handleChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
             required
+            className="input"
           />
           <input
             name="previous_grade"
             placeholder="Current Grade Level *"
             value={form.previous_grade}
             onChange={handleChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
             required
+            className="input"
           />
           <input
+            type="number"
             name="gpa"
-            placeholder="GPA (if applicable)"
+            placeholder="GPA (optional)"
             value={form.gpa}
             onChange={handleChange}
-            type="number"
             step="0.01"
             min="0"
             max="4"
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
+            className="input"
           />
           <select
             name="course"
             value={form.course}
             onChange={handleChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500"
             required
+            className="input"
           >
             <option value="">Select Program Interest *</option>
             <option value="Career Guidance">Career Guidance & Consultation</option>
@@ -188,111 +223,114 @@ const ApplicationForm = ({ onSuccess }) => {
             <option value="Higher Education Guidance">Higher Education & Scholarship Guidance</option>
           </select>
         </div>
-      </div>
+      </section>
 
-      {/* Mentorship Interest Section */}
-      <div className="bg-green-50 p-4 rounded-lg">
-        <h3 className="text-lg font-semibold mb-3 text-green-800">Mentorship Program Details</h3>
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              What mentorship area interests you most? *
-            </label>
-            <select
-              name="mentorship_interest"
-              value={form.mentorship_interest}
-              onChange={handleChange}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-              required
-            >
-              <option value="">Select area of interest *</option>
-              <option value="Career Consultation">Career Consultation & Guidance</option>
-              <option value="Technology Skills">Technology Skills & Innovation</option>
-              <option value="Higher Education">Higher Education Pathways</option>
-              <option value="Scholarship Application">Scholarship Application Support</option>
-              <option value="Personal Development">Personal Development & Growth</option>
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              What are your career goals? *
-            </label>
-            <textarea
-              name="career_goals"
-              placeholder="Tell us about your career aspirations and goals..."
-              value={form.career_goals}
-              onChange={handleChange}
-              rows="3"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Why are you interested in this mentorship program? *
-            </label>
-            <textarea
-              name="why_mentorship"
-              placeholder="Share why you want to join Alif Mentorship Hub..."
-              value={form.why_mentorship}
-              onChange={handleChange}
-              rows="3"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500"
-              required
-            />
-          </div>
+      {/* ── Career Guidance ──────────────────────────────────── */}
+      <section className="bg-green-50 p-4 rounded-lg space-y-3">
+        <h3 className="font-semibold text-green-800">Career Guidance</h3>
+
+        <div>
+          <label className="label">What mentorship area interests you most? *</label>
+          <select
+            name="mentorship_interest"
+            value={form.mentorship_interest}
+            onChange={handleChange}
+            required
+            className="input"
+          >
+            <option value="">Select area of interest *</option>
+            <option value="Career Consultation">Career Consultation & Guidance</option>
+            <option value="Technology Skills">Technology Skills & Innovation</option>
+            <option value="Higher Education">Higher Education Pathways</option>
+            <option value="Scholarship Application">Scholarship Application Support</option>
+            <option value="Personal Development">Personal Development & Growth</option>
+          </select>
         </div>
-      </div>
 
-      {/* Document Upload Section */}
-      <div className="bg-orange-50 p-4 rounded-lg">
-        <h3 className="text-lg font-semibold mb-3 text-orange-800">Supporting Documents</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label className="label">What are your career goals? *</label>
+          <textarea
+            name="career_goals"
+            placeholder="Tell us about your career aspirations..."
+            value={form.career_goals}
+            onChange={handleChange}
+            rows={3}
+            required
+            className="input resize-none"
+          />
+        </div>
+
+        <div>
+          <label className="label">Why are you interested in this mentorship program? *</label>
+          <textarea
+            name="why_mentorship"
+            placeholder="Share why you want to join Alif Mentorship Hub..."
+            value={form.why_mentorship}
+            onChange={handleChange}
+            rows={3}
+            required
+            className="input resize-none"
+          />
+        </div>
+      </section>
+
+      {/* ── Supporting Documents ─────────────────────────────── */}
+      <section className="bg-orange-50 p-4 rounded-lg space-y-3">
+        <h3 className="font-semibold text-orange-800">Supporting Documents</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Academic Certificate or Transcript *
-            </label>
+            <label className="label">Academic Certificate *</label>
             <input
               type="file"
               name="certificate"
               onChange={handleChange}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500"
               accept=".pdf,.jpg,.jpeg,.png"
+              required
+              className="input"
             />
           </div>
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Passport Photo *
-            </label>
+            <label className="label">Passport Photo *</label>
             <input
               type="file"
               name="passport_photo"
               onChange={handleChange}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500"
               accept=".jpg,.jpeg,.png"
               required
+              className="input"
             />
           </div>
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Recommendation Letter (Optional)
-            </label>
+            <label className="label">Transcript (optional)</label>
+            <input
+              type="file"
+              name="transcript"
+              onChange={handleChange}
+              accept=".pdf,.jpg,.jpeg,.png"
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="label">Recommendation Letter (optional)</label>
             <input
               type="file"
               name="recommendation_letter"
               onChange={handleChange}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500"
               accept=".pdf,.jpg,.jpeg,.png"
+              className="input"
             />
           </div>
         </div>
-      </div>
+      </section>
 
-      <button 
-        type="submit" 
-        className="w-full bg-linear-to-r from-blue-600 to-indigo-600 text-white font-bold py-3 px-6 rounded-lg hover:from-blue-700 hover:to-indigo-700 transition shadow-lg hover:shadow-xl"
+      <button
+        type="submit"
+        disabled={submitting}
+        className={`w-full py-3 px-6 rounded-lg font-bold text-white bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 transition shadow-lg ${
+          submitting ? "opacity-50 cursor-not-allowed" : ""
+        }`}
       >
-        Submit Mentorship Application
+        {submitting ? "Submitting..." : "Submit Application"}
       </button>
     </form>
   );

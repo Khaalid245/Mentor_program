@@ -5,8 +5,11 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.authentication import JWTAuthentication
-from .models import StudentApplication, Mentor
-from .serializers import StudentApplicationSerializer, MentorSerializer, UserSerializer
+from .models import StudentApplication, Mentor, MentorshipSession, CareerPath, StudentGoal
+from .serializers import (
+    StudentApplicationSerializer, MentorSerializer, UserSerializer,
+    MentorshipSessionSerializer, CareerPathSerializer, StudentGoalSerializer
+)
 
 # ---------------------------
 # User Registration
@@ -33,6 +36,17 @@ class RegisterView(generics.CreateAPIView):
 
 
 # ---------------------------
+# Role Helper
+# ---------------------------
+def get_user_role(user):
+    if user.is_staff:
+        return "admin"
+    if hasattr(user, "mentor_profile"):
+        return "mentor"
+    return "student"
+
+
+# ---------------------------
 # User Login
 # ---------------------------
 class LoginView(generics.GenericAPIView):
@@ -50,6 +64,7 @@ class LoginView(generics.GenericAPIView):
         refresh = RefreshToken.for_user(user)
         return Response({
             "username": user.username,
+            "role": get_user_role(user),
             "access": str(refresh.access_token),
             "refresh": str(refresh),
         })
@@ -76,6 +91,183 @@ class MentorViewSet(viewsets.ModelViewSet):
 
 
 # ---------------------------
+# Career Path (Admin writes, everyone reads)
+# ---------------------------
+class CareerPathViewSet(viewsets.ModelViewSet):
+    queryset = CareerPath.objects.all()
+    serializer_class = CareerPathSerializer
+    authentication_classes = [JWTAuthentication]
+
+    def get_permissions(self):
+        # Anyone authenticated can list/retrieve
+        if self.action in ['list', 'retrieve']:
+            return [permissions.IsAuthenticated()]
+        # Only admin can create/update/delete
+        return [permissions.IsAdminUser()]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
+# ---------------------------
+# Student Goal
+# ---------------------------
+class StudentGoalViewSet(viewsets.ModelViewSet):
+    serializer_class = StudentGoalSerializer
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None  # student has exactly one goal
+
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_staff:
+            return StudentGoal.objects.select_related('student', 'career_path').all()
+        if hasattr(user, 'mentor_profile'):
+            assigned_student_ids = StudentApplication.objects.filter(
+                mentor=user.mentor_profile
+            ).values_list('user_id', flat=True)
+            return StudentGoal.objects.select_related(
+                'student', 'career_path'
+            ).filter(student_id__in=assigned_student_ids)
+        return StudentGoal.objects.select_related('student', 'career_path').filter(student=user)
+
+    def create(self, request, *args, **kwargs):
+        mentor_profile = getattr(request.user, 'mentor_profile', None)
+        is_admin = request.user.is_staff
+
+        # Determine which student this goal is for
+        student_id = request.data.get('student_id')
+
+        if mentor_profile or is_admin:
+            # Mentor/admin must supply student_id
+            if not student_id:
+                return Response(
+                    {"error": "student_id is required."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                student = User.objects.get(pk=student_id)
+            except User.DoesNotExist:
+                return Response({"error": "Student not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            # Mentor can only set goals for their assigned students
+            if mentor_profile:
+                is_assigned = StudentApplication.objects.filter(
+                    user=student, mentor=mentor_profile
+                ).exists()
+                if not is_assigned:
+                    return Response(
+                        {"detail": "You are not assigned to this student."},
+                        status=status.HTTP_403_FORBIDDEN
+                    )
+        else:
+            # Student sets their own goal
+            student = request.user
+
+        # Upsert — update if goal already exists, create if not
+        goal, created = StudentGoal.objects.update_or_create(
+            student=student,
+            defaults={
+                'career_path_id': request.data.get('career_path_id'),
+                'status': request.data.get('status', 'Exploring'),
+                'mentor_notes': request.data.get('mentor_notes', ''),
+            }
+        )
+        serializer = self.get_serializer(goal)
+        http_status = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        return Response(serializer.data, status=http_status)
+
+    def update(self, request, *args, **kwargs):
+        goal = self.get_object()
+        mentor_profile = getattr(request.user, 'mentor_profile', None)
+
+        # Mentor can only update goals of their assigned students
+        if mentor_profile:
+            is_assigned = StudentApplication.objects.filter(
+                user=goal.student, mentor=mentor_profile
+            ).exists()
+            if not is_assigned:
+                return Response(
+                    {"detail": "You are not assigned to this student."},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+        return super().update(request, *args, **kwargs)
+
+
+# ---------------------------
+# Mentorship Session Management
+# ---------------------------
+class MentorshipSessionViewSet(viewsets.ModelViewSet):
+    """
+    - Mentor: create sessions for their assigned students, update notes/outcome
+    - Student: read-only, sees only sessions linked to their application
+    - Admin: full access
+    """
+    serializer_class = MentorshipSessionSerializer
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+    pagination_class = None  # already scoped per user — no pagination needed
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = MentorshipSession.objects.select_related('application__user', 'mentor__user')
+        if user.is_staff:
+            return qs.all()
+        if hasattr(user, 'mentor_profile'):
+            return qs.filter(mentor=user.mentor_profile)
+        if hasattr(user, 'application'):
+            return qs.filter(application=user.application)
+        return MentorshipSession.objects.none()
+
+    def create(self, request, *args, **kwargs):
+        mentor_profile = getattr(request.user, 'mentor_profile', None)
+        if not mentor_profile and not request.user.is_staff:
+            return Response(
+                {"detail": "Only mentors or admins can create sessions."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        application_id = request.data.get('application_id')
+        try:
+            application = StudentApplication.objects.get(pk=application_id)
+        except StudentApplication.DoesNotExist:
+            return Response({"error": "Application not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # Mentor can only create sessions for their assigned student
+        if mentor_profile and application.mentor != mentor_profile:
+            return Response(
+                {"detail": "You are not assigned to this student."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        # Application must be approved before sessions can be created
+        if application.status != 'Approved':
+            return Response(
+                {"detail": "Sessions can only be created for approved applications."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save(
+            application=application,
+            mentor=mentor_profile or application.mentor
+        )
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        session = self.get_object()
+        mentor_profile = getattr(request.user, 'mentor_profile', None)
+        # Only the session's mentor or admin can update
+        if mentor_profile and session.mentor != mentor_profile:
+            return Response(
+                {"detail": "You can only update your own sessions."},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        return super().update(request, *args, **kwargs)
+
+
+# ---------------------------
 # Student Application Management
 # ---------------------------
 class StudentApplicationViewSet(viewsets.ModelViewSet):
@@ -88,6 +280,7 @@ class StudentApplicationViewSet(viewsets.ModelViewSet):
     queryset = StudentApplication.objects.all()
     serializer_class = StudentApplicationSerializer
     authentication_classes = [JWTAuthentication]
+    pagination_class = None  # scoped per user — student always has 1, mentor has few
 
     def get_permissions(self):
         # If the action has been decorated with permission_classes, DRF leaves those to be checked first.
@@ -102,11 +295,12 @@ class StudentApplicationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
+        qs = StudentApplication.objects.select_related('user', 'mentor__user')
         if user.is_staff:
-            return StudentApplication.objects.all()
+            return qs.all()
         if hasattr(user, 'mentor_profile'):
-            return StudentApplication.objects.filter(mentor=user.mentor_profile)
-        return StudentApplication.objects.filter(user=user)
+            return qs.filter(mentor=user.mentor_profile)
+        return qs.filter(user=user)
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data, context={'request': request})
@@ -144,9 +338,6 @@ class StudentApplicationViewSet(viewsets.ModelViewSet):
         """
         application = self.get_object()
         user = request.user
-
-        # Debug print (remove later) — shows if request arrived with proper user.
-        print("Logged user in update_status:", user, "is_authenticated:", user.is_authenticated)
 
         # Check user is admin or mentor
         mentor_profile = getattr(user, "mentor_profile", None)
