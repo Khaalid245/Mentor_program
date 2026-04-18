@@ -1,118 +1,148 @@
 from rest_framework import serializers
-from django.contrib.auth.models import User
-from .models import Mentor, StudentApplication, MentorshipSession, CareerPath, StudentGoal
+from django.contrib.auth.password_validation import validate_password
+from .models import User, MentorProfile, Session, Review, Resource
 
-class UserSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, required=False)
-    password2 = serializers.CharField(write_only=True, required=False)
+
+# ─────────────────────────────────────────────
+# Auth
+# ─────────────────────────────────────────────
+class RegisterSerializer(serializers.ModelSerializer):
+    password = serializers.CharField(write_only=True, validators=[validate_password])
+    role = serializers.ChoiceField(choices=['student', 'mentor'])
 
     class Meta:
         model = User
-        fields = ['id','username','email','first_name','last_name','password','password2']
-
-    def validate(self, data):
-        # If creating via this serializer, ensure passwords match when provided
-        password = data.get('password')
-        password2 = data.get('password2')
-        if password or password2:
-            if password != password2:
-                raise serializers.ValidationError({"password": "Passwords do not match."})
-        return data
+        fields = ('username', 'password', 'role', 'phone', 'first_name', 'last_name')
+        extra_kwargs = {
+            'first_name': {'required': False},
+            'last_name':  {'required': False},
+        }
 
     def create(self, validated_data):
-        # used for registration endpoint
-        validated_data.pop('password2', None)
-        password = validated_data.pop('password', None)
-
+        password = validated_data.pop('password')
         user = User(**validated_data)
-        if password:
-            user.set_password(password)
-        else:
-            # If no password provided for some reason, you may want to set unusable password or raise
-            user.set_unusable_password()
+        user.set_password(password)
         user.save()
+        # Auto-create blank MentorProfile when role is mentor
+        if user.role == 'mentor':
+            MentorProfile.objects.create(
+                user=user,
+                university='',
+                graduation_year=2024,
+                field_of_study='',
+            )
         return user
 
 
-class MentorSerializer(serializers.ModelSerializer):
-    # keep nested user read-only (student dashboard will get first_name/last_name/email via this nested user)
-    user = UserSerializer(read_only=True)
-    # New fields to expose
-    profile_picture = serializers.ImageField(read_only=True)
-    phone_number = serializers.CharField(read_only=True, allow_null=True)
+# ─────────────────────────────────────────────
+# Mentor Profile
+# ─────────────────────────────────────────────
+class MentorProfileSerializer(serializers.ModelSerializer):
+    user_id    = serializers.IntegerField(source='user.id', read_only=True)
+    username   = serializers.CharField(source='user.username', read_only=True)
+    first_name = serializers.CharField(source='user.first_name', read_only=True)
+    last_name  = serializers.CharField(source='user.last_name', read_only=True)
 
     class Meta:
-        model = Mentor
-        fields = ['id', 'user', 'specialization', 'bio', 'available', 'profile_picture', 'phone_number']
+        model  = MentorProfile
+        fields = (
+            'id', 'user_id', 'username', 'first_name', 'last_name',
+            'university', 'graduation_year', 'field_of_study',
+            'bio', 'linkedin_url', 'availability',
+            'is_verified', 'average_rating',
+        )
+        read_only_fields = ('id', 'user_id', 'username', 'first_name', 'last_name',
+                            'is_verified', 'average_rating')
 
 
-class CareerPathSerializer(serializers.ModelSerializer):
+class MentorProfileUpdateSerializer(serializers.ModelSerializer):
+    """Used by mentor to update their own profile — restricted fields only."""
     class Meta:
-        model = CareerPath
-        fields = [
-            'id', 'title', 'description',
-            'skills_required', 'university_options', 'scholarship_info'
-        ]
+        model  = MentorProfile
+        fields = ('university', 'graduation_year', 'field_of_study',
+                  'bio', 'linkedin_url', 'availability')
 
 
-class StudentGoalSerializer(serializers.ModelSerializer):
-    career_path = CareerPathSerializer(read_only=True)
-    career_path_id = serializers.PrimaryKeyRelatedField(
-        queryset=CareerPath.objects.all(),
-        source='career_path',
-        write_only=True
-    )
-    student_name = serializers.SerializerMethodField(read_only=True)
-    student_id = serializers.PrimaryKeyRelatedField(read_only=True, source='student')
-
-    class Meta:
-        model = StudentGoal
-        fields = [
-            'id', 'student_id', 'student_name', 'career_path', 'career_path_id',
-            'status', 'mentor_notes', 'updated_at'
-        ]
-        read_only_fields = ['student_id', 'student_name', 'updated_at']
-
-    def get_student_name(self, obj):
-        return f"{obj.student.first_name} {obj.student.last_name}".strip()
-
-
-class MentorshipSessionSerializer(serializers.ModelSerializer):
-    # Read-only display fields
-    mentor_name = serializers.SerializerMethodField(read_only=True)
-    application_id = serializers.PrimaryKeyRelatedField(read_only=True, source='application')
+# ─────────────────────────────────────────────
+# Session
+# ─────────────────────────────────────────────
+class SessionSerializer(serializers.ModelSerializer):
+    student_username = serializers.CharField(source='student.username', read_only=True)
+    mentor_username  = serializers.CharField(source='mentor.username', read_only=True)
+    mentor_id        = serializers.IntegerField(write_only=True)
 
     class Meta:
-        model = MentorshipSession
-        fields = [
-            'id', 'application_id', 'mentor_name',
-            'scheduled_at', 'notes', 'outcome',
-            'created_at', 'updated_at'
-        ]
-        # Mentor is set automatically from request.user in the view
-        read_only_fields = ['mentor_name', 'application_id', 'created_at', 'updated_at']
+        model  = Session
+        fields = (
+            'id', 'student_username', 'mentor_id', 'mentor_username',
+            'status', 'requested_time', 'goal',
+            'meet_link', 'mentor_notes', 'created_at',
+        )
+        read_only_fields = ('id', 'student_username', 'mentor_username',
+                            'status', 'meet_link', 'mentor_notes', 'created_at')
 
-    def get_mentor_name(self, obj):
-        return f"{obj.mentor.user.first_name} {obj.mentor.user.last_name}".strip()
+    def validate_mentor_id(self, value):
+        try:
+            mentor_user = User.objects.get(pk=value, role='mentor')
+        except User.DoesNotExist:
+            raise serializers.ValidationError("No mentor found with this id.")
+        try:
+            profile = mentor_user.mentor_profile
+        except MentorProfile.DoesNotExist:
+            raise serializers.ValidationError("This mentor has no profile.")
+        if not profile.is_verified:
+            raise serializers.ValidationError("This mentor is not yet verified.")
+        return value
+
+    def create(self, validated_data):
+        mentor_id = validated_data.pop('mentor_id')
+        mentor    = User.objects.get(pk=mentor_id)
+        return Session.objects.create(mentor=mentor, **validated_data)
 
 
-class StudentApplicationSerializer(serializers.ModelSerializer):
-    user = UserSerializer(read_only=True)
-    mentor = MentorSerializer(read_only=True)
-    mentor_id = serializers.PrimaryKeyRelatedField(
-        queryset=Mentor.objects.all(),
-        source='mentor',
-        write_only=True,
-        required=False
-    )
+class SessionDetailSerializer(serializers.ModelSerializer):
+    """Full detail — used for retrieve, includes nested mentor profile summary."""
+    student_username  = serializers.CharField(source='student.username', read_only=True)
+    mentor_username   = serializers.CharField(source='mentor.username', read_only=True)
+    mentor_profile_id = serializers.IntegerField(source='mentor.mentor_profile.id', read_only=True)
+    has_review        = serializers.SerializerMethodField()
 
     class Meta:
-        model = StudentApplication
-        fields = [
-            'id','user','mentor','mentor_id','first_name','last_name','dob','gender',
-            'national_id','phone','email','address','previous_school','previous_grade',
-            'gpa','course','mentorship_interest','career_goals','why_mentorship',
-            'certificate','transcript','passport_photo',
-            'recommendation_letter','status','feedback','consultation_date',
-            'created_at','updated_at'
-        ]
+        model  = Session
+        fields = (
+            'id', 'student_username', 'mentor_username', 'mentor_profile_id',
+            'status', 'requested_time', 'goal',
+            'meet_link', 'mentor_notes', 'created_at', 'has_review',
+        )
+
+    def get_has_review(self, obj):
+        return hasattr(obj, 'review')
+
+
+# ─────────────────────────────────────────────
+# Review
+# ─────────────────────────────────────────────
+class ReviewSerializer(serializers.ModelSerializer):
+    student_username = serializers.CharField(source='session.student.username', read_only=True)
+
+    class Meta:
+        model  = Review
+        fields = ('id', 'student_username', 'rating', 'comment', 'created_at')
+        read_only_fields = ('id', 'student_username', 'created_at')
+
+    def validate_rating(self, value):
+        if not (1 <= value <= 5):
+            raise serializers.ValidationError("Rating must be between 1 and 5.")
+        return value
+
+
+# ─────────────────────────────────────────────
+# Resource
+# ─────────────────────────────────────────────
+class ResourceSerializer(serializers.ModelSerializer):
+    author_username = serializers.CharField(source='author.username', read_only=True)
+
+    class Meta:
+        model  = Resource
+        fields = ('id', 'title', 'category', 'body', 'author_username', 'published_at')
+        read_only_fields = ('id', 'author_username', 'published_at')

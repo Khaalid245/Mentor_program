@@ -1,23 +1,25 @@
-from rest_framework import viewsets, permissions, status, generics
+from django.utils import timezone
+from rest_framework import generics, status
+from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.decorators import action, api_view, permission_classes
-from django.contrib.auth import authenticate
-from django.contrib.auth.models import User
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
-from rest_framework_simplejwt.authentication import JWTAuthentication
-from .models import StudentApplication, Mentor, MentorshipSession, CareerPath, StudentGoal
-from .serializers import (
-    StudentApplicationSerializer, MentorSerializer, UserSerializer,
-    MentorshipSessionSerializer, CareerPathSerializer, StudentGoalSerializer
-)
 
-# ---------------------------
-# User Registration
-# ---------------------------
+from .models import User, MentorProfile, Session, Review, Resource
+from .serializers import (
+    RegisterSerializer, MentorProfileSerializer, MentorProfileUpdateSerializer,
+    SessionSerializer, SessionDetailSerializer, ReviewSerializer, ResourceSerializer,
+)
+from .permissions import IsStudent, IsMentor, IsAdmin
+
+
+# ─────────────────────────────────────────────
+# Auth
+# ─────────────────────────────────────────────
 class RegisterView(generics.CreateAPIView):
-    queryset = User.objects.all()
-    serializer_class = UserSerializer
-    permission_classes = [permissions.AllowAny]
+    queryset           = User.objects.all()
+    serializer_class   = RegisterSerializer
+    permission_classes = [AllowAny]
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -25,341 +27,446 @@ class RegisterView(generics.CreateAPIView):
         user = serializer.save()
         refresh = RefreshToken.for_user(user)
         return Response({
-            "id": user.id,
-            "username": user.username,
-            "email": user.email,
-            "first_name": user.first_name,
-            "last_name": user.last_name,
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
+            'access':   str(refresh.access_token),
+            'refresh':  str(refresh),
+            'user_id':  user.id,
+            'username': user.username,
+            'role':     user.role,
         }, status=status.HTTP_201_CREATED)
 
 
-# ---------------------------
-# Role Helper
-# ---------------------------
-def get_user_role(user):
-    if user.is_staff:
-        return "admin"
-    if hasattr(user, "mentor_profile"):
-        return "mentor"
-    return "student"
+class LoginView(APIView):
+    permission_classes = [AllowAny]
 
+    def post(self, request):
+        username = request.data.get('username', '').strip()
+        password = request.data.get('password', '')
 
-# ---------------------------
-# User Login
-# ---------------------------
-class LoginView(generics.GenericAPIView):
-    serializer_class = UserSerializer
-    permission_classes = [permissions.AllowAny]
+        if not username or not password:
+            return Response(
+                {'error': 'Username and password are required.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
-    def post(self, request, *args, **kwargs):
-        username = request.data.get('username')
-        password = request.data.get('password')
+        try:
+            user = User.objects.get(username=username)
+        except User.DoesNotExist:
+            return Response(
+                {'error': 'Invalid credentials.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
 
-        user = authenticate(username=username, password=password)
-        if user is None:
-            return Response({"error": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
+        if not user.check_password(password):
+            return Response(
+                {'error': 'Invalid credentials.'},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        if not user.is_active:
+            return Response(
+                {'error': 'This account is disabled.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         refresh = RefreshToken.for_user(user)
         return Response({
-            "username": user.username,
-            "role": get_user_role(user),
-            "access": str(refresh.access_token),
-            "refresh": str(refresh),
+            'access':   str(refresh.access_token),
+            'refresh':  str(refresh),
+            'user_id':  user.id,
+            'username': user.username,
+            'role':     user.role,
         })
 
 
-# ---------------------------
-# Current User Endpoint
-# ---------------------------
-@api_view(['GET'])
-@permission_classes([permissions.IsAuthenticated])
-def current_user(request):
-    serializer = UserSerializer(request.user)
-    return Response(serializer.data)
+# ─────────────────────────────────────────────
+# Mentor Profiles — Public
+# ─────────────────────────────────────────────
+class MentorListView(generics.ListAPIView):
+    """Public — returns all verified mentors. Supports ?field= and ?university= filters."""
+    serializer_class   = MentorProfileSerializer
+    permission_classes = [AllowAny]
+
+    def get_queryset(self):
+        qs = MentorProfile.objects.filter(is_verified=True).select_related('user').order_by('-id')
+        field      = self.request.query_params.get('field')
+        university = self.request.query_params.get('university')
+        if field:
+            qs = qs.filter(field_of_study__icontains=field)
+        if university:
+            qs = qs.filter(university__icontains=university)
+        return qs
 
 
-# ---------------------------
-# Mentor Management (Admin Only)
-# ---------------------------
-class MentorViewSet(viewsets.ModelViewSet):
-    queryset = Mentor.objects.all()
-    serializer_class = MentorSerializer
-    permission_classes = [permissions.IsAdminUser]
-    authentication_classes = [JWTAuthentication]
+class MentorDetailView(generics.RetrieveAPIView):
+    """Public — single verified mentor profile."""
+    serializer_class   = MentorProfileSerializer
+    permission_classes = [AllowAny]
+    queryset           = MentorProfile.objects.filter(is_verified=True).select_related('user')
 
 
-# ---------------------------
-# Career Path (Admin writes, everyone reads)
-# ---------------------------
-class CareerPathViewSet(viewsets.ModelViewSet):
-    queryset = CareerPath.objects.all()
-    serializer_class = CareerPathSerializer
-    authentication_classes = [JWTAuthentication]
+class MentorMeView(APIView):
+    """Mentor only — GET or PATCH their own profile."""
+    permission_classes = [IsMentor]
 
+    def get(self, request):
+        try:
+            profile = request.user.mentor_profile
+        except MentorProfile.DoesNotExist:
+            return Response({'error': 'Mentor profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(MentorProfileSerializer(profile).data)
+
+    def patch(self, request):
+        try:
+            profile = request.user.mentor_profile
+        except MentorProfile.DoesNotExist:
+            return Response({'error': 'Mentor profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+        serializer = MentorProfileUpdateSerializer(profile, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(MentorProfileSerializer(profile).data)
+
+
+# ─────────────────────────────────────────────
+# Mentor Reviews — Public
+# ─────────────────────────────────────────────
+class MentorReviewListView(generics.ListAPIView):
+    """Public — all reviews for a specific mentor."""
+    serializer_class   = ReviewSerializer
+    permission_classes = [AllowAny]
+
+    def get_queryset(self):
+        mentor_profile_id = self.kwargs['pk']
+        return (
+            Review.objects
+            .filter(session__mentor__mentor_profile__id=mentor_profile_id)
+            .select_related('session__student')
+            .order_by('-created_at')
+        )
+
+
+# ─────────────────────────────────────────────
+# Admin — Mentor Verification
+# ─────────────────────────────────────────────
+class AdminMentorVerifyView(APIView):
+    """Admin only — verify a mentor profile."""
+    permission_classes = [IsAdmin]
+
+    def post(self, request, pk):
+        try:
+            profile = MentorProfile.objects.get(pk=pk)
+        except MentorProfile.DoesNotExist:
+            return Response({'error': 'Mentor profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+        profile.is_verified = True
+        profile.save(update_fields=['is_verified'])
+        return Response({'detail': 'Mentor verified successfully.'})
+
+
+class AdminMentorRejectView(APIView):
+    """Admin only — reject and delete a mentor profile, reset user role to student."""
+    permission_classes = [IsAdmin]
+
+    def post(self, request, pk):
+        try:
+            profile = MentorProfile.objects.get(pk=pk)
+        except MentorProfile.DoesNotExist:
+            return Response({'error': 'Mentor profile not found.'}, status=status.HTTP_404_NOT_FOUND)
+        user = profile.user
+        profile.delete()
+        user.role = 'student'
+        user.save(update_fields=['role'])
+        return Response({'detail': 'Mentor profile rejected and removed.'})
+
+
+# ─────────────────────────────────────────────
+# Admin — Unverified Mentor List
+# ─────────────────────────────────────────────
+class AdminMentorListView(generics.ListAPIView):
+    """Admin only — list all mentor profiles (verified and unverified)."""
+    serializer_class   = MentorProfileSerializer
+    permission_classes = [IsAdmin]
+
+    def get_queryset(self):
+        return MentorProfile.objects.select_related('user').order_by('-id')
+
+
+# ─────────────────────────────────────────────
+# Sessions
+# ─────────────────────────────────────────────
+
+# Valid status transitions — terminal states have no outgoing transitions
+VALID_TRANSITIONS = {
+    'pending':   ['accepted', 'declined', 'cancelled'],
+    'accepted':  ['completed', 'cancelled'],
+    'declined':  [],
+    'completed': [],
+    'cancelled': [],
+}
+
+
+class SessionListCreateView(generics.ListCreateAPIView):
+    """
+    GET  — scoped by role (student/mentor/admin). Supports ?status= filter.
+    POST — student only. Creates a pending session.
+    """
     def get_permissions(self):
-        # Anyone authenticated can list/retrieve
-        if self.action in ['list', 'retrieve']:
-            return [permissions.IsAuthenticated()]
-        # Only admin can create/update/delete
-        return [permissions.IsAdminUser()]
+        if self.request.method == 'POST':
+            return [IsStudent()]
+        return [IsAuthenticated()]
+
+    def get_serializer_class(self):
+        if self.request.method == 'POST':
+            return SessionSerializer
+        return SessionDetailSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = Session.objects.select_related('student', 'mentor').order_by('-created_at')
+
+        if user.role == 'student':
+            qs = qs.filter(student=user)
+        elif user.role == 'mentor':
+            qs = qs.filter(mentor=user)
+        # admin sees all
+
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        return qs
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        serializer.save(student=self.request.user)
 
 
-# ---------------------------
-# Student Goal
-# ---------------------------
-class StudentGoalViewSet(viewsets.ModelViewSet):
-    serializer_class = StudentGoalSerializer
-    authentication_classes = [JWTAuthentication]
-    permission_classes = [permissions.IsAuthenticated]
-    pagination_class = None  # student has exactly one goal
+class SessionDetailView(generics.RetrieveUpdateAPIView):
+    """Detail + patch — accessible by the student or mentor involved, or admin.
+    Mentor can PATCH mentor_notes on completed sessions."""
+    serializer_class   = SessionDetailSerializer
+    permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
         user = self.request.user
-        if user.is_staff:
-            return StudentGoal.objects.select_related('student', 'career_path').all()
-        if hasattr(user, 'mentor_profile'):
-            assigned_student_ids = StudentApplication.objects.filter(
-                mentor=user.mentor_profile
-            ).values_list('user_id', flat=True)
-            return StudentGoal.objects.select_related(
-                'student', 'career_path'
-            ).filter(student_id__in=assigned_student_ids)
-        return StudentGoal.objects.select_related('student', 'career_path').filter(student=user)
+        qs   = Session.objects.select_related('student', 'mentor')
+        if user.role == 'student':
+            return qs.filter(student=user)
+        if user.role == 'mentor':
+            return qs.filter(mentor=user)
+        return qs.all()
 
-    def create(self, request, *args, **kwargs):
-        mentor_profile = getattr(request.user, 'mentor_profile', None)
-        is_admin = request.user.is_staff
-
-        # Determine which student this goal is for
-        student_id = request.data.get('student_id')
-
-        if mentor_profile or is_admin:
-            # Mentor/admin must supply student_id
-            if not student_id:
+    def partial_update(self, request, *args, **kwargs):
+        session = self.get_object()
+        # Mentor can only patch mentor_notes, and only on completed sessions
+        if request.user.role == 'mentor':
+            if session.status != 'completed':
+                from rest_framework.response import Response
+                from rest_framework import status
                 return Response(
-                    {"error": "student_id is required."},
-                    status=status.HTTP_400_BAD_REQUEST
+                    {'error': 'Notes can only be added to completed sessions.'},
+                    status=status.HTTP_400_BAD_REQUEST,
                 )
-            try:
-                student = User.objects.get(pk=student_id)
-            except User.DoesNotExist:
-                return Response({"error": "Student not found."}, status=status.HTTP_404_NOT_FOUND)
-
-            # Mentor can only set goals for their assigned students
-            if mentor_profile:
-                is_assigned = StudentApplication.objects.filter(
-                    user=student, mentor=mentor_profile
-                ).exists()
-                if not is_assigned:
-                    return Response(
-                        {"detail": "You are not assigned to this student."},
-                        status=status.HTTP_403_FORBIDDEN
-                    )
-        else:
-            # Student sets their own goal
-            student = request.user
-
-        # Upsert — update if goal already exists, create if not
-        goal, created = StudentGoal.objects.update_or_create(
-            student=student,
-            defaults={
-                'career_path_id': request.data.get('career_path_id'),
-                'status': request.data.get('status', 'Exploring'),
-                'mentor_notes': request.data.get('mentor_notes', ''),
-            }
-        )
-        serializer = self.get_serializer(goal)
-        http_status = status.HTTP_201_CREATED if created else status.HTTP_200_OK
-        return Response(serializer.data, status=http_status)
-
-    def update(self, request, *args, **kwargs):
-        goal = self.get_object()
-        mentor_profile = getattr(request.user, 'mentor_profile', None)
-
-        # Mentor can only update goals of their assigned students
-        if mentor_profile:
-            is_assigned = StudentApplication.objects.filter(
-                user=goal.student, mentor=mentor_profile
-            ).exists()
-            if not is_assigned:
-                return Response(
-                    {"detail": "You are not assigned to this student."},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-        return super().update(request, *args, **kwargs)
+            allowed = {k: v for k, v in request.data.items() if k == 'mentor_notes'}
+            serializer = self.get_serializer(session, data=allowed, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+        return super().partial_update(request, *args, **kwargs)
 
 
-# ---------------------------
-# Mentorship Session Management
-# ---------------------------
-class MentorshipSessionViewSet(viewsets.ModelViewSet):
-    """
-    - Mentor: create sessions for their assigned students, update notes/outcome
-    - Student: read-only, sees only sessions linked to their application
-    - Admin: full access
-    """
-    serializer_class = MentorshipSessionSerializer
-    authentication_classes = [JWTAuthentication]
-    permission_classes = [permissions.IsAuthenticated]
-    pagination_class = None  # already scoped per user — no pagination needed
+class SessionAcceptView(APIView):
+    """Mentor only — accept a pending session. Requires meet_link."""
+    permission_classes = [IsMentor]
 
-    def get_queryset(self):
-        user = self.request.user
-        qs = MentorshipSession.objects.select_related('application__user', 'mentor__user')
-        if user.is_staff:
-            return qs.all()
-        if hasattr(user, 'mentor_profile'):
-            return qs.filter(mentor=user.mentor_profile)
-        if hasattr(user, 'application'):
-            return qs.filter(application=user.application)
-        return MentorshipSession.objects.none()
+    def post(self, request, pk):
+        session = self._get_session(request.user, pk)
+        if session is None:
+            return Response({'error': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    def create(self, request, *args, **kwargs):
-        mentor_profile = getattr(request.user, 'mentor_profile', None)
-        if not mentor_profile and not request.user.is_staff:
+        if 'accepted' not in VALID_TRANSITIONS.get(session.status, []):
             return Response(
-                {"detail": "Only mentors or admins can create sessions."},
-                status=status.HTTP_403_FORBIDDEN
+                {'error': f"Cannot accept a session with status '{session.status}'."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        application_id = request.data.get('application_id')
+        meet_link = request.data.get('meet_link', '').strip()
+        if not meet_link:
+            return Response(
+                {'error': 'meet_link is required when accepting a session.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session.status    = 'accepted'
+        session.meet_link = meet_link
+        session.save(update_fields=['status', 'meet_link'])
+        return Response(SessionDetailSerializer(session).data)
+
+    def _get_session(self, mentor_user, pk):
         try:
-            application = StudentApplication.objects.get(pk=application_id)
-        except StudentApplication.DoesNotExist:
-            return Response({"error": "Application not found."}, status=status.HTTP_404_NOT_FOUND)
+            return Session.objects.get(pk=pk, mentor=mentor_user)
+        except Session.DoesNotExist:
+            return None
 
-        # Mentor can only create sessions for their assigned student
-        if mentor_profile and application.mentor != mentor_profile:
+
+class SessionDeclineView(APIView):
+    """Mentor only — decline a pending session."""
+    permission_classes = [IsMentor]
+
+    def post(self, request, pk):
+        try:
+            session = Session.objects.get(pk=pk, mentor=request.user)
+        except Session.DoesNotExist:
+            return Response({'error': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if 'declined' not in VALID_TRANSITIONS.get(session.status, []):
             return Response(
-                {"detail": "You are not assigned to this student."},
-                status=status.HTTP_403_FORBIDDEN
+                {'error': f"Cannot decline a session with status '{session.status}'."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Application must be approved before sessions can be created
-        if application.status != 'Approved':
+        session.status = 'declined'
+        session.save(update_fields=['status'])
+        return Response(SessionDetailSerializer(session).data)
+
+
+class SessionCompleteView(APIView):
+    """Mentor only — mark an accepted session as completed."""
+    permission_classes = [IsMentor]
+
+    def post(self, request, pk):
+        try:
+            session = Session.objects.get(pk=pk, mentor=request.user)
+        except Session.DoesNotExist:
+            return Response({'error': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if 'completed' not in VALID_TRANSITIONS.get(session.status, []):
             return Response(
-                {"detail": "Sessions can only be created for approved applications."},
-                status=status.HTTP_400_BAD_REQUEST
+                {'error': f"Cannot complete a session with status '{session.status}'."},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        serializer = self.get_serializer(data=request.data)
+        # Mentor can optionally add notes when completing
+        notes = request.data.get('mentor_notes', '').strip()
+        session.status = 'completed'
+        if notes:
+            session.mentor_notes = notes
+        session.save(update_fields=['status', 'mentor_notes'])
+        return Response(SessionDetailSerializer(session).data)
+
+
+class SessionCancelView(APIView):
+    """Student only — cancel a pending session."""
+    permission_classes = [IsStudent]
+
+    def post(self, request, pk):
+        try:
+            session = Session.objects.get(pk=pk, student=request.user)
+        except Session.DoesNotExist:
+            return Response({'error': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if session.status != 'pending':
+            return Response(
+                {'error': 'Only pending sessions can be cancelled.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session.status = 'cancelled'
+        session.save(update_fields=['status'])
+        return Response(SessionDetailSerializer(session).data)
+
+
+# ─────────────────────────────────────────────
+# Reviews
+# ─────────────────────────────────────────────
+class SessionReviewView(APIView):
+    """Student only — post a review for a completed session."""
+    permission_classes = [IsStudent]
+
+    def post(self, request, pk):
+        try:
+            session = Session.objects.get(pk=pk, student=request.user)
+        except Session.DoesNotExist:
+            return Response({'error': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if session.status != 'completed':
+            return Response(
+                {'error': 'You can only review a completed session.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if hasattr(session, 'review'):
+            return Response(
+                {'error': 'You have already reviewed this session.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = ReviewSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        serializer.save(
-            application=application,
-            mentor=mentor_profile or application.mentor
-        )
+        # Save triggers the post_save signal in models.py which updates average_rating
+        serializer.save(session=session)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
-    def update(self, request, *args, **kwargs):
-        session = self.get_object()
-        mentor_profile = getattr(request.user, 'mentor_profile', None)
-        # Only the session's mentor or admin can update
-        if mentor_profile and session.mentor != mentor_profile:
-            return Response(
-                {"detail": "You can only update your own sessions."},
-                status=status.HTTP_403_FORBIDDEN
-            )
-        return super().update(request, *args, **kwargs)
 
-
-# ---------------------------
-# Student Application Management
-# ---------------------------
-class StudentApplicationViewSet(viewsets.ModelViewSet):
+# ─────────────────────────────────────────────
+# Resources
+# ─────────────────────────────────────────────
+class ResourceListCreateView(generics.ListCreateAPIView):
     """
-    - list/retrieve/create: authenticated users (students see their own, mentors see assigned, admins see all)
-    - update / partial_update / destroy: admin only (keeps it simple)
-    - assign_mentor: admin only
-    - update_status: authenticated but further validated inside method (only assigned mentor or admin)
+    GET  — public. Supports ?category= filter.
+    POST — admin only.
     """
-    queryset = StudentApplication.objects.all()
-    serializer_class = StudentApplicationSerializer
-    authentication_classes = [JWTAuthentication]
-    pagination_class = None  # scoped per user — student always has 1, mentor has few
+    serializer_class = ResourceSerializer
 
     def get_permissions(self):
-        # If the action has been decorated with permission_classes, DRF leaves those to be checked first.
-        # We'll fallback to sensible defaults for the others:
-        if self.action in ['list', 'retrieve', 'create']:
-            return [permissions.IsAuthenticated()]
-        # update/partial_update/destroy -> admins only for simplicity
-        if self.action in ['update', 'partial_update', 'destroy']:
-            return [permissions.IsAdminUser()]
-        # For custom actions (assign_mentor/update_status) @action decorator sets permission_classes.
-        return [permissions.IsAuthenticated()]
+        if self.request.method == 'POST':
+            return [IsAdmin()]
+        return [AllowAny()]
 
     def get_queryset(self):
-        user = self.request.user
-        qs = StudentApplication.objects.select_related('user', 'mentor__user')
-        if user.is_staff:
-            return qs.all()
-        if hasattr(user, 'mentor_profile'):
-            return qs.filter(mentor=user.mentor_profile)
-        return qs.filter(user=user)
+        qs       = Resource.objects.select_related('author').order_by('-published_at')
+        category = self.request.query_params.get('category')
+        if category:
+            qs = qs.filter(category=category)
+        return qs
 
-    def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data, context={'request': request})
-        serializer.is_valid(raise_exception=True)
-        serializer.save(user=request.user)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    def perform_create(self, serializer):
+        serializer.save(author=self.request.user, published_at=timezone.now())
 
-    def update(self, request, *args, **kwargs):
-        instance = self.get_object()
-        user = request.user
-        # Students should not edit after submission unless Rejected
-        if user == instance.user and instance.status != "Rejected":
-            return Response({"error": "You cannot edit your application after submission."}, status=status.HTTP_403_FORBIDDEN)
-        return super().update(request, *args, **kwargs)
 
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAdminUser])
-    def assign_mentor(self, request, pk=None):
-        application = self.get_object()
-        mentor_id = request.data.get('mentor_id')
-        mentor = Mentor.objects.filter(id=mentor_id).first()
-        if not mentor:
-            return Response({"error": "Mentor not found"}, status=status.HTTP_404_NOT_FOUND)
+class ResourceDetailView(generics.RetrieveUpdateDestroyAPIView):
+    """
+    GET    — public.
+    PATCH  — admin only.
+    DELETE — admin only.
+    """
+    serializer_class = ResourceSerializer
+    queryset         = Resource.objects.select_related('author')
 
-        application.mentor = mentor
-        application.status = "Under Review"
-        application.save()
-        return Response({"success": f"Mentor {mentor.user.username} assigned successfully."})
+    def get_permissions(self):
+        if self.request.method == 'GET':
+            return [AllowAny()]
+        return [IsAdmin()]
 
-    @action(detail=True, methods=['post'], permission_classes=[permissions.IsAuthenticated])
-    def update_status(self, request, pk=None):
-        """
-        Only allow:
-         - Admins (user.is_staff)
-         - The assigned mentor (user.mentor_profile and matches application.mentor)
-        """
-        application = self.get_object()
-        user = request.user
 
-        # Check user is admin or mentor
-        mentor_profile = getattr(user, "mentor_profile", None)
-        if not mentor_profile and not user.is_staff:
-            # This will return 403 with JSON we control
-            return Response({"detail": "Only assigned mentors or admins can change status."}, status=status.HTTP_403_FORBIDDEN)
+# ─────────────────────────────────────────────
+# Admin Stats
+# ─────────────────────────────────────────────
+class AdminStatsView(APIView):
+    """Admin only — platform-wide statistics."""
+    permission_classes = [IsAdmin]
 
-        # If mentor, ensure they are the assigned mentor for this application
-        if mentor_profile and application.mentor != mentor_profile:
-            return Response({"detail": "You are not assigned to this student."}, status=status.HTTP_403_FORBIDDEN)
+    def get(self, request):
+        now        = timezone.now()
+        month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
-        status_choice = request.data.get('status')
-        feedback = request.data.get('feedback', '')
-        consultation_date = request.data.get('consultation_date', None)
+        all_reviews = Review.objects.all()
+        avg_rating  = (
+            sum(r.rating for r in all_reviews) / all_reviews.count()
+            if all_reviews.count() > 0 else 0.0
+        )
 
-        if status_choice not in dict(application.STATUS_CHOICES):
-            return Response({"error": "Invalid status choice."}, status=status.HTTP_400_BAD_REQUEST)
-
-        application.status = status_choice
-        application.feedback = feedback
-        if consultation_date:
-            application.consultation_date = consultation_date
-        application.save()
-
-        return Response({"success": f"Application status updated to '{status_choice}'."})
+        return Response({
+            'total_students':          User.objects.filter(role='student').count(),
+            'total_verified_mentors':  MentorProfile.objects.filter(is_verified=True).count(),
+            'total_sessions':          Session.objects.count(),
+            'sessions_this_month':     Session.objects.filter(created_at__gte=month_start).count(),
+            'completed_sessions':      Session.objects.filter(status='completed').count(),
+            'average_platform_rating': round(avg_rating, 2),
+        })

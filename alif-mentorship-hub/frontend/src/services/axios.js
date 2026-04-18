@@ -12,8 +12,9 @@ api.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
-    // Only set Content-Type if not already set (preserves multipart/form-data for file uploads)
-    if (!config.headers["Content-Type"]) {
+    // Only set Content-Type for non-FormData requests
+    // For FormData (file uploads), let the browser set it with the correct boundary
+    if (!config.headers["Content-Type"] && !(config.data instanceof FormData)) {
       config.headers["Content-Type"] = "application/json";
     }
     return config;
@@ -41,7 +42,11 @@ const forceLogout = () => {
   localStorage.removeItem("access_token");
   localStorage.removeItem("refresh_token");
   localStorage.removeItem("user_role");
-  window.location.href = "/login";
+  localStorage.removeItem("username");
+  // Only redirect if not already on login page
+  if (!window.location.pathname.includes("/login")) {
+    window.location.href = "/login";
+  }
 };
 
 // ─── Response Interceptor ────────────────────────────────────────────────────
@@ -83,7 +88,7 @@ api.interceptors.response.use(
     try {
       // Use plain axios here — not `api` — to avoid triggering this interceptor again
       const res = await axios.post(
-        `${import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api/"}auth/token/refresh/`,
+        `${import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000/api/"}auth/refresh/`,
         { refresh: refreshToken }
       );
 
@@ -100,9 +105,13 @@ api.interceptors.response.use(
       originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
       return api(originalRequest);
     } catch (refreshError) {
-      // Refresh token is expired or invalid — full logout
+      // Refresh token is expired or invalid
       rejectPending(refreshError);
-      forceLogout();
+      // Only force logout on GET requests (background data fetching)
+      // For POST/PUT/PATCH, let the calling code handle the error
+      if (originalRequest.method === "get") {
+        forceLogout();
+      }
       return Promise.reject(refreshError);
     } finally {
       isRefreshing = false;

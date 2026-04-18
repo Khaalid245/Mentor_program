@@ -1,176 +1,174 @@
+from django.contrib.auth.models import AbstractUser
 from django.db import models
-from django.contrib.auth.models import User
-from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator, MaxValueValidator
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 
 
-def validate_file_size(file):
-    """Reject files larger than 5MB."""
-    limit = 5 * 1024 * 1024
-    if file.size > limit:
-        raise ValidationError("File size must not exceed 5MB.")
-
-# ---------------------------------------
-# Mentor Model (created by Admin)
-# ---------------------------------------
-class Mentor(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='mentor_profile')
-    specialization = models.CharField(max_length=100)
-    bio = models.TextField(blank=True, null=True)
-    available = models.BooleanField(default=True)
-
-    # NEW optional fields
-    profile_picture = models.ImageField(upload_to='mentor_profiles/', blank=True, null=True)
-    phone_number = models.CharField(max_length=20, blank=True, null=True)
-
-    def __str__(self):
-        return f"{self.user.username} - {self.specialization}"
-
-    @property
-    def name(self):
-        return f"{self.user.first_name} {self.user.last_name}"
-
-    @property
-    def email(self):
-        return self.user.email
-
-
-# ---------------------------------------
-# Career Path Model (managed by Admin)
-# ---------------------------------------
-class CareerPath(models.Model):
-    title = models.CharField(max_length=150, unique=True)
-    description = models.TextField()
-    skills_required = models.TextField(blank=True, null=True)
-    university_options = models.TextField(blank=True, null=True)
-    scholarship_info = models.TextField(blank=True, null=True)
-    created_by = models.ForeignKey(
-        User, on_delete=models.SET_NULL, null=True, related_name='career_paths'
-    )
-
-    def __str__(self):
-        return self.title
-
-    class Meta:
-        ordering = ['title']
-
-
-# ---------------------------------------
-# Student Goal Model
-# ---------------------------------------
-class StudentGoal(models.Model):
-    STATUS_CHOICES = [
-        ('Exploring', 'Exploring'),
-        ('Decided', 'Decided'),
-        ('Applying', 'Applying'),
-        ('Enrolled', 'Enrolled'),
+# ─────────────────────────────────────────────
+# Custom User
+# ─────────────────────────────────────────────
+class User(AbstractUser):
+    ROLE_CHOICES = [
+        ('student', 'Student'),
+        ('mentor',  'Mentor'),
+        ('admin',   'Admin'),
     ]
+    role = models.CharField(max_length=10, choices=ROLE_CHOICES, default='student')
+    phone = models.CharField(max_length=20, blank=True)
 
-    student = models.OneToOneField(
-        User, on_delete=models.CASCADE, related_name='goal'
-    )
-    career_path = models.ForeignKey(
-        CareerPath, on_delete=models.SET_NULL, null=True, related_name='student_goals'
-    )
-    status = models.CharField(
-        max_length=20, choices=STATUS_CHOICES, default='Exploring'
-    )
-    mentor_notes = models.TextField(blank=True, null=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    def save(self, *args, **kwargs):
+        # Keep Django's is_staff in sync with the admin role so the
+        # Django admin panel stays accessible for admin users.
+        if self.role == 'admin':
+            self.is_staff = True
+        super().save(*args, **kwargs)
 
     def __str__(self):
-        return f"{self.student.username} → {self.career_path} ({self.status})"
+        return f"{self.username} ({self.role})"
 
 
-# ---------------------------------------
-# Mentorship Session Model
-# ---------------------------------------
-class MentorshipSession(models.Model):
-    OUTCOME_CHOICES = [
-        ('Scheduled', 'Scheduled'),
-        ('Completed', 'Completed'),
-        ('Cancelled', 'Cancelled'),
-    ]
-
-    application = models.ForeignKey(
-        'StudentApplication',
+# ─────────────────────────────────────────────
+# Mentor Profile
+# ─────────────────────────────────────────────
+class MentorProfile(models.Model):
+    user = models.OneToOneField(
+        User,
         on_delete=models.CASCADE,
-        related_name='sessions'
+        related_name='mentor_profile',
+        db_index=True,
+    )
+    university       = models.CharField(max_length=200)
+    graduation_year  = models.PositiveIntegerField()
+    field_of_study   = models.CharField(max_length=200)
+    bio              = models.TextField(blank=True)
+    linkedin_url     = models.URLField(blank=True)
+    # Stores a list of available time slots, e.g.:
+    # [{"day": "Monday", "start": "09:00", "end": "17:00"}]
+    availability     = models.JSONField(default=list, blank=True)
+    # Set to True by admin only — controls whether profile is visible to students
+    is_verified      = models.BooleanField(default=False)
+    # Denormalised average — recalculated by signal every time a Review is saved
+    average_rating   = models.FloatField(default=0.0)
+
+    def __str__(self):
+        return f"{self.user.get_full_name()} — {self.field_of_study} ({self.university})"
+
+
+# ─────────────────────────────────────────────
+# Session
+# ─────────────────────────────────────────────
+class Session(models.Model):
+    STATUS_CHOICES = [
+        ('pending',   'Pending'),
+        ('accepted',  'Accepted'),
+        ('declined',  'Declined'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    student = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='sessions_as_student',
+        db_index=True,
     )
     mentor = models.ForeignKey(
-        'Mentor',
+        User,
         on_delete=models.CASCADE,
-        related_name='sessions'
+        related_name='sessions_as_mentor',
+        db_index=True,
     )
-    scheduled_at = models.DateTimeField()
-    notes = models.TextField(blank=True, null=True)
-    outcome = models.CharField(
-        max_length=20, choices=OUTCOME_CHOICES, default='Scheduled'
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    def __str__(self):
-        return f"Session: {self.application.user.username} with {self.mentor.user.username} on {self.scheduled_at}"
-
-    class Meta:
-        ordering = ['-scheduled_at']
-
-
-# ---------------------------------------
-# Student Application Model
-# ---------------------------------------
-class StudentApplication(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='application')
-
-    # Personal info
-    first_name = models.CharField(max_length=100)
-    last_name = models.CharField(max_length=100)
-    dob = models.DateField()
-    gender = models.CharField(max_length=20)
-    national_id = models.CharField(max_length=50)
-    phone = models.CharField(max_length=20)
-    email = models.EmailField()
-    address = models.CharField(max_length=255)
-
-    # Academic info
-    previous_school = models.CharField(max_length=255)
-    previous_grade = models.CharField(max_length=100)
-    gpa = models.DecimalField(max_digits=4, decimal_places=2)
-    course = models.CharField(max_length=255)
-
-    # Career guidance fields
-    mentorship_interest = models.CharField(max_length=100, blank=True, null=True)
-    career_goals = models.TextField(blank=True, null=True)
-    why_mentorship = models.TextField(blank=True, null=True)
-
-    # Documents
-    certificate = models.FileField(upload_to='documents/certificates/', validators=[validate_file_size])
-    transcript = models.FileField(upload_to='documents/transcripts/', null=True, blank=True, validators=[validate_file_size])
-    passport_photo = models.FileField(upload_to='documents/passports/', validators=[validate_file_size])
-    recommendation_letter = models.FileField(upload_to='documents/recommendations/', null=True, blank=True, validators=[validate_file_size])
-
-    # Mentor assignment
-    mentor = models.ForeignKey(
-        Mentor, on_delete=models.SET_NULL, null=True, blank=True, related_name='students'
-    )
-
-    # Application review
-    STATUS_CHOICES = [
-        ('Pending', 'Pending'),
-        ('Under Review', 'Under Review'),
-        ('Approved', 'Approved'),
-        ('Rejected', 'Rejected'),
-    ]
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='Pending')
-    feedback = models.TextField(blank=True, null=True)
-    consultation_date = models.DateTimeField(blank=True, null=True)
-
-    # Timestamps
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    def __str__(self):
-        return f"{self.user.username} - {self.course} ({self.status})"
+    status         = models.CharField(max_length=10, choices=STATUS_CHOICES, default='pending')
+    requested_time = models.DateTimeField()
+    goal           = models.CharField(max_length=200)
+    # Provided by mentor when accepting the session
+    meet_link      = models.URLField(blank=True, null=True)
+    # Added by mentor after the session is completed
+    mentor_notes   = models.TextField(blank=True, null=True)
+    created_at     = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ['-created_at']
+
+    def __str__(self):
+        return (
+            f"Session #{self.pk}: {self.student.username} → "
+            f"{self.mentor.username} | {self.status} | {self.requested_time:%Y-%m-%d %H:%M}"
+        )
+
+
+# ─────────────────────────────────────────────
+# Review
+# ─────────────────────────────────────────────
+class Review(models.Model):
+    # OneToOne enforces one review per session
+    session = models.OneToOneField(
+        Session,
+        on_delete=models.CASCADE,
+        related_name='review',
+        db_index=True,
+    )
+    rating  = models.IntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+    comment    = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # NOTE: "student only" write rule is enforced in the serializer/view (Phase 2),
+    # not here — the model stores data, business rules live in the API layer.
+
+    def __str__(self):
+        return f"Review for Session #{self.session_id} — {self.rating}/5"
+
+
+# ─────────────────────────────────────────────
+# Resource
+# ─────────────────────────────────────────────
+class Resource(models.Model):
+    CATEGORY_CHOICES = [
+        ('university',    'University'),
+        ('scholarships',  'Scholarships'),
+        ('career',        'Career'),
+        ('student_life',  'Student Life'),
+    ]
+
+    title        = models.CharField(max_length=300)
+    category     = models.CharField(max_length=20, choices=CATEGORY_CHOICES)
+    body         = models.TextField()
+    author       = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='resources',
+        db_index=True,
+    )
+    published_at = models.DateTimeField()
+
+    class Meta:
+        ordering = ['-published_at']
+
+    def __str__(self):
+        return f"{self.title} [{self.category}]"
+
+
+# ─────────────────────────────────────────────
+# Signal — recompute MentorProfile.average_rating
+# whenever a Review is created or updated
+# ─────────────────────────────────────────────
+@receiver(post_save, sender=Review)
+def update_mentor_average_rating(sender, instance, **kwargs):
+    mentor_user = instance.session.mentor
+    try:
+        profile = mentor_user.mentor_profile
+    except MentorProfile.DoesNotExist:
+        return
+
+    reviews = Review.objects.filter(session__mentor=mentor_user)
+    count = reviews.count()
+    if count == 0:
+        profile.average_rating = 0.0
+    else:
+        total = sum(r.rating for r in reviews)
+        profile.average_rating = round(total / count, 2)
+    profile.save(update_fields=['average_rating'])

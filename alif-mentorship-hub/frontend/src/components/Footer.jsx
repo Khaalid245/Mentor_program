@@ -1,6 +1,12 @@
 import React from "react";
+import { useLocation } from "react-router-dom";
+
+const DASHBOARD_PATHS = ["/student/dashboard", "/mentor/dashboard", "/admin/dashboard"];
 
 const Footer = () => {
+  const location = useLocation();
+  if (DASHBOARD_PATHS.includes(location.pathname)) return null;
+
   const currentYear = new Date().getFullYear();
 
   return (

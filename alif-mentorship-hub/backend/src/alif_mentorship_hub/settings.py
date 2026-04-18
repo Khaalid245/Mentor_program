@@ -108,6 +108,9 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = 5 * 1024 * 1024    # 5MB per file
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Custom user model — must be set before any migration is created
+AUTH_USER_MODEL = 'api.User'
+
 # DRF
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
@@ -122,8 +125,8 @@ REST_FRAMEWORK = {
 
 # JWT
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=24),   # 24h — long enough for a full session
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),    # 7 days — user stays logged in for a week
 }
 
 # CORS
