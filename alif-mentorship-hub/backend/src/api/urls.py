@@ -6,9 +6,15 @@ from .views import (
     AdminMentorListView, AdminMentorVerifyView, AdminMentorRejectView,
     SessionListCreateView, SessionDetailView,
     SessionAcceptView, SessionDeclineView, SessionCompleteView, SessionCancelView,
-    SessionReviewView,
+    SessionReviewView, SessionFeedbackView, SessionReportView,
     ResourceListCreateView, ResourceDetailView,
     AdminStatsView,
+    AdminMeView, AdminPlatformSettingsView, AdminNotificationSettingsView,
+    AdminUserListView, AdminUserDetailView,
+    AdminUserSuspendView, AdminUserUnsuspendView, AdminUserDeactivateView,
+    AdminSessionListView, AdminSessionCancelView,
+    AdminReportListView, AdminReportResolveView, AdminReportDismissView,
+    AdminAuditLogView,
 )
 
 urlpatterns = [
@@ -16,6 +22,7 @@ urlpatterns = [
     path('auth/register/',        RegisterView.as_view(),      name='auth-register'),
     path('auth/login/',           LoginView.as_view(),          name='auth-login'),
     path('auth/refresh/',         TokenRefreshView.as_view(),   name='auth-refresh'),
+    path('auth/me/',              AdminMeView.as_view(),        name='auth-me'),
 
     # ── Mentor Profiles (public) ───────────────────────────────────────────
     path('mentors/',                      MentorListView.as_view(),         name='mentor-list'),
@@ -28,6 +35,17 @@ urlpatterns = [
     path('admin/mentors/<int:pk>/verify/',      AdminMentorVerifyView.as_view(), name='admin-mentor-verify'),
     path('admin/mentors/<int:pk>/reject/',      AdminMentorRejectView.as_view(), name='admin-mentor-reject'),
 
+    # ── Admin — Session Management ────────────────────────────────────────
+    path('admin/sessions/',                     AdminSessionListView.as_view(),    name='admin-session-list'),
+    path('admin/sessions/<int:pk>/cancel/',     AdminSessionCancelView.as_view(),  name='admin-session-cancel'),
+
+    # ── Admin — User Management ────────────────────────────────────────────
+    path('admin/users/',                        AdminUserListView.as_view(),       name='admin-user-list'),
+    path('admin/users/<int:pk>/',               AdminUserDetailView.as_view(),     name='admin-user-detail'),
+    path('admin/users/<int:pk>/suspend/',       AdminUserSuspendView.as_view(),    name='admin-user-suspend'),
+    path('admin/users/<int:pk>/unsuspend/',     AdminUserUnsuspendView.as_view(),  name='admin-user-unsuspend'),
+    path('admin/users/<int:pk>/deactivate/',    AdminUserDeactivateView.as_view(), name='admin-user-deactivate'),
+
     # ── Sessions ───────────────────────────────────────────────────────────
     path('sessions/',                           SessionListCreateView.as_view(), name='session-list-create'),
     path('sessions/<int:pk>/',                  SessionDetailView.as_view(),     name='session-detail'),
@@ -38,11 +56,29 @@ urlpatterns = [
 
     # ── Reviews ────────────────────────────────────────────────────────────
     path('sessions/<int:pk>/review/',           SessionReviewView.as_view(),     name='session-review'),
+    
+    # ── Student Feedback (Mentor → Student) ────────────────────────────────
+    path('sessions/<int:pk>/feedback/',         SessionFeedbackView.as_view(),   name='session-feedback'),
+
+    # ── Reports ────────────────────────────────────────────────────────────
+    path('sessions/<int:pk>/report/',           SessionReportView.as_view(),     name='session-report'),
+
+    # ── Admin — Reports ────────────────────────────────────────────────────
+    path('admin/reports/',                      AdminReportListView.as_view(),    name='admin-report-list'),
+    path('admin/reports/<int:pk>/resolve/',     AdminReportResolveView.as_view(), name='admin-report-resolve'),
+    path('admin/reports/<int:pk>/dismiss/',     AdminReportDismissView.as_view(), name='admin-report-dismiss'),
+
+    # ── Admin — Audit Log ──────────────────────────────────────────────────
+    path('admin/audit-log/',                    AdminAuditLogView.as_view(),      name='admin-audit-log'),
 
     # ── Resources ──────────────────────────────────────────────────────────
     path('resources/',                          ResourceListCreateView.as_view(), name='resource-list-create'),
     path('resources/<int:pk>/',                 ResourceDetailView.as_view(),     name='resource-detail'),
 
     # ── Admin Stats ────────────────────────────────────────────────────────
-    path('admin/stats/',                        AdminStatsView.as_view(),         name='admin-stats'),
+    path('admin/stats/',                        AdminStatsView.as_view(),                name='admin-stats'),
+
+    # ── Admin Settings ─────────────────────────────────────────────────────
+    path('admin/settings/',                     AdminPlatformSettingsView.as_view(),     name='admin-settings'),
+    path('admin/notification-settings/',        AdminNotificationSettingsView.as_view(), name='admin-notification-settings'),
 ]
