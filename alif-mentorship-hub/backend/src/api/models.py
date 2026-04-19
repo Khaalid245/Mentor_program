@@ -23,6 +23,7 @@ class User(AbstractUser):
     cancellation_count = models.IntegerField(default=0)
     no_show_count = models.IntegerField(default=0)
     reliability_score = models.FloatField(default=100.0)
+    restriction_until = models.DateTimeField(null=True, blank=True)
 
     def save(self, *args, **kwargs):
         # Keep Django's is_staff in sync with the admin role so the
@@ -30,6 +31,47 @@ class User(AbstractUser):
         if self.role == 'admin':
             self.is_staff = True
         super().save(*args, **kwargs)
+    
+    def is_restricted(self):
+        """Check if user is currently restricted from booking sessions"""
+        if not self.restriction_until:
+            return False
+        from django.utils import timezone
+        return timezone.now() < self.restriction_until
+    
+    def calculate_reliability_score(self):
+        """Calculate reliability score based on cancellations and no-shows"""
+        # Start at 100, deduct 10 points per cancellation, 20 per no-show
+        score = 100.0
+        score -= (self.cancellation_count * 10)
+        score -= (self.no_show_count * 20)
+        return max(0.0, score)  # Never go below 0
+    
+    def apply_cancellation_penalty(self):
+        """Apply penalty for late cancellation (< 24h before session)"""
+        self.cancellation_count += 1
+        self.reliability_score = self.calculate_reliability_score()
+        
+        # Restrict user after 3 cancellations (24 hour restriction)
+        if self.cancellation_count >= 3:
+            from django.utils import timezone
+            from datetime import timedelta
+            self.restriction_until = timezone.now() + timedelta(hours=24)
+        
+        self.save(update_fields=['cancellation_count', 'reliability_score', 'restriction_until'])
+    
+    def apply_no_show_penalty(self):
+        """Apply penalty for no-show (session time passed, not marked complete)"""
+        self.no_show_count += 1
+        self.reliability_score = self.calculate_reliability_score()
+        
+        # Restrict user after 2 no-shows (48 hour restriction)
+        if self.no_show_count >= 2:
+            from django.utils import timezone
+            from datetime import timedelta
+            self.restriction_until = timezone.now() + timedelta(hours=48)
+        
+        self.save(update_fields=['no_show_count', 'reliability_score', 'restriction_until'])
 
     def __str__(self):
         return f"{self.username} ({self.role})"
@@ -50,9 +92,12 @@ class MentorProfile(models.Model):
     field_of_study   = models.CharField(max_length=200)
     bio              = models.TextField(blank=True)
     linkedin_url     = models.URLField(blank=True)
-    # Stores a list of available time slots, e.g.:
-    # [{"day": "Monday", "start": "09:00", "end": "17:00"}]
+    # Weekly recurring availability slots
+    # Format: [{"day": 1, "start_time": "09:00", "end_time": "17:00", "timezone": "Africa/Mogadishu"}]
+    # day: 0=Monday, 1=Tuesday, ..., 6=Sunday
     availability     = models.JSONField(default=list, blank=True)
+    # Timezone for mentor's availability (default: Africa/Mogadishu)
+    timezone         = models.CharField(max_length=50, default='Africa/Mogadishu')
     # Set to True by admin only — controls whether profile is visible to students
     is_verified      = models.BooleanField(default=False)
     # Denormalised average — recalculated by signal every time a Review is saved
@@ -81,6 +126,75 @@ class MentorProfile(models.Model):
         if self.availability:
             score += 10
         return score
+    
+    def get_available_slots(self, start_date, end_date):
+        """Generate list of available time slots between start_date and end_date"""
+        from datetime import datetime, timedelta
+        import pytz
+        
+        if not self.availability:
+            return []
+        
+        slots = []
+        mentor_tz = pytz.timezone(self.timezone)
+        current_date = start_date.date()
+        end = end_date.date()
+        
+        while current_date <= end:
+            weekday = current_date.weekday()  # 0=Monday, 6=Sunday
+            
+            # Check if mentor has availability on this weekday
+            for slot in self.availability:
+                if slot.get('day') == weekday:
+                    # Parse start and end times
+                    start_time_str = slot.get('start_time', '09:00')
+                    end_time_str = slot.get('end_time', '17:00')
+                    
+                    # Create datetime objects in mentor's timezone
+                    start_hour, start_min = map(int, start_time_str.split(':'))
+                    end_hour, end_min = map(int, end_time_str.split(':'))
+                    
+                    slot_start = mentor_tz.localize(
+                        datetime.combine(current_date, datetime.min.time().replace(hour=start_hour, minute=start_min))
+                    )
+                    slot_end = mentor_tz.localize(
+                        datetime.combine(current_date, datetime.min.time().replace(hour=end_hour, minute=end_min))
+                    )
+                    
+                    # Only include future slots
+                    if slot_start > datetime.now(mentor_tz):
+                        slots.append({
+                            'start': slot_start.isoformat(),
+                            'end': slot_end.isoformat(),
+                            'day_name': current_date.strftime('%A'),
+                            'date': current_date.isoformat(),
+                        })
+            
+            current_date += timedelta(days=1)
+        
+        return slots
+    
+    def is_available_at(self, requested_datetime):
+        """Check if mentor is available at a specific datetime"""
+        import pytz
+        
+        if not self.availability:
+            return False
+        
+        mentor_tz = pytz.timezone(self.timezone)
+        requested_time = requested_datetime.astimezone(mentor_tz)
+        weekday = requested_time.weekday()
+        requested_time_str = requested_time.strftime('%H:%M')
+        
+        for slot in self.availability:
+            if slot.get('day') == weekday:
+                start_time = slot.get('start_time', '09:00')
+                end_time = slot.get('end_time', '17:00')
+                
+                if start_time <= requested_time_str <= end_time:
+                    return True
+        
+        return False
     
     def save(self, *args, **kwargs):
         self.profile_completeness = self.calculate_completeness()
@@ -373,3 +487,137 @@ class AdminNotificationSettings(models.Model):
 
     def __str__(self):
         return f'Notification settings for {self.admin.username}'
+
+
+# ─────────────────────────────────────────────
+# Mentor Favorites (Student → Mentor bookmarks)
+# ─────────────────────────────────────────────
+class MentorFavorite(models.Model):
+    student = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='favorite_mentors',
+        db_index=True,
+    )
+    mentor = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='favorited_by',
+        db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ('student', 'mentor')
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.student.username} → {self.mentor.username}"
+
+
+# ─────────────────────────────────────────────
+# Saved Search (Student's search preferences)
+# ─────────────────────────────────────────────
+class SavedSearch(models.Model):
+    student = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='saved_searches',
+        db_index=True,
+    )
+    name = models.CharField(max_length=100)
+    # Search filters stored as JSON
+    filters = models.JSONField(default=dict)
+    # Example: {"field": "Software Engineering", "rating_min": 4, "languages": ["English", "Somali"]}
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"{self.student.username} - {self.name}"
+
+
+# ─────────────────────────────────────────────
+# Message (Real-time messaging)
+# ─────────────────────────────────────────────
+class Message(models.Model):
+    sender = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='sent_messages',
+        db_index=True,
+    )
+    recipient = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='received_messages',
+        db_index=True,
+    )
+    content = models.TextField()
+    is_read = models.BooleanField(default=False)
+    read_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['sender', 'recipient', '-created_at']),
+            models.Index(fields=['is_read', 'recipient']),
+        ]
+
+    def __str__(self):
+        return f"Message from {self.sender.username} to {self.recipient.username}"
+
+
+# ─────────────────────────────────────────────
+# Session Analytics
+# ─────────────────────────────────────────────
+class SessionAnalytics(models.Model):
+    session = models.OneToOneField(
+        Session,
+        on_delete=models.CASCADE,
+        related_name='analytics',
+        db_index=True,
+    )
+    student = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='student_analytics',
+        db_index=True,
+    )
+    mentor = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='mentor_analytics',
+        db_index=True,
+    )
+    # Student metrics
+    skills_learned = models.JSONField(default=list, blank=True)
+    goals_achieved = models.IntegerField(default=0)
+    satisfaction_rating = models.IntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+    # Mentor metrics
+    student_engagement = models.IntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+    mentor_effectiveness = models.IntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Analytics for Session #{self.session_id}"

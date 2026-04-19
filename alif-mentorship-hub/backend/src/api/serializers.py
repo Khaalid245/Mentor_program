@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.password_validation import validate_password
-from .models import User, MentorProfile, Session, Review, StudentFeedback, Resource, Report, AuditLog, PlatformSettings, AdminNotificationSettings
+from .models import User, MentorProfile, Session, Review, StudentFeedback, Resource, Report, AuditLog, PlatformSettings, AdminNotificationSettings, MentorFavorite, SavedSearch, Message, SessionAnalytics
 
 
 # ─────────────────────────────────────────────
@@ -87,28 +87,74 @@ class MentorProfileSerializer(serializers.ModelSerializer):
     first_name   = serializers.CharField(source='user.first_name', read_only=True)
     last_name    = serializers.CharField(source='user.last_name', read_only=True)
     review_count = serializers.SerializerMethodField()
+    reliability_score = serializers.FloatField(source='user.reliability_score', read_only=True)
+    is_favorited = serializers.SerializerMethodField()
 
     class Meta:
         model  = MentorProfile
         fields = (
             'id', 'user_id', 'username', 'first_name', 'last_name',
             'university', 'graduation_year', 'field_of_study',
-            'bio', 'linkedin_url', 'availability',
-            'is_verified', 'average_rating', 'review_count',
+            'bio', 'linkedin_url', 'availability', 'timezone',
+            'is_verified', 'average_rating', 'review_count', 'reliability_score', 'is_favorited',
             'profile_completeness', 'years_of_experience', 'languages',
         )
         read_only_fields = ('id', 'user_id', 'username', 'first_name', 'last_name',
-                            'is_verified', 'average_rating', 'review_count', 'profile_completeness')
+                            'is_verified', 'average_rating', 'review_count', 'profile_completeness', 'reliability_score', 'is_favorited')
 
     def get_review_count(self, obj):
         return Review.objects.filter(session__mentor=obj.user).count()
+    
+    def get_is_favorited(self, obj):
+        request = self.context.get('request')
+        if request and request.user.is_authenticated and request.user.role == 'student':
+            return MentorFavorite.objects.filter(student=request.user, mentor=obj.user).exists()
+        return False
 
 
 class MentorProfileUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model  = MentorProfile
         fields = ('university', 'graduation_year', 'field_of_study',
-                  'bio', 'linkedin_url', 'availability', 'years_of_experience', 'languages')
+                  'bio', 'linkedin_url', 'availability', 'timezone', 'years_of_experience', 'languages')
+    
+    def validate_availability(self, value):
+        """Validate availability slots format"""
+        if not isinstance(value, list):
+            raise serializers.ValidationError("Availability must be a list of slots.")
+        
+        for slot in value:
+            if not isinstance(slot, dict):
+                raise serializers.ValidationError("Each slot must be an object.")
+            
+            # Validate required fields
+            if 'day' not in slot or 'start_time' not in slot or 'end_time' not in slot:
+                raise serializers.ValidationError("Each slot must have 'day', 'start_time', and 'end_time'.")
+            
+            # Validate day (0-6)
+            if not isinstance(slot['day'], int) or not (0 <= slot['day'] <= 6):
+                raise serializers.ValidationError("Day must be an integer between 0 (Monday) and 6 (Sunday).")
+            
+            # Validate time format (HH:MM)
+            import re
+            time_pattern = re.compile(r'^([01]\d|2[0-3]):([0-5]\d)$')
+            if not time_pattern.match(slot['start_time']) or not time_pattern.match(slot['end_time']):
+                raise serializers.ValidationError("Times must be in HH:MM format (24-hour).")
+            
+            # Validate start < end
+            if slot['start_time'] >= slot['end_time']:
+                raise serializers.ValidationError("Start time must be before end time.")
+        
+        return value
+    
+    def validate_timezone(self, value):
+        """Validate timezone string"""
+        import pytz
+        try:
+            pytz.timezone(value)
+        except pytz.exceptions.UnknownTimeZoneError:
+            raise serializers.ValidationError(f"Invalid timezone: {value}")
+        return value
 
 
 # ─────────────────────────────────────────────
@@ -141,6 +187,49 @@ class SessionSerializer(serializers.ModelSerializer):
         if not profile.is_verified:
             raise serializers.ValidationError("This mentor is not yet verified.")
         return value
+    
+    def validate_requested_time(self, value):
+        """Validate that requested time is in the future"""
+        from django.utils import timezone
+        if value <= timezone.now():
+            raise serializers.ValidationError("Requested time must be in the future.")
+        return value
+    
+    def validate(self, data):
+        """Validate that requested time matches mentor's availability"""
+        mentor_id = data.get('mentor_id')
+        requested_time = data.get('requested_time')
+        
+        if mentor_id and requested_time:
+            try:
+                mentor_user = User.objects.get(pk=mentor_id, role='mentor')
+                profile = mentor_user.mentor_profile
+                
+                # Check if mentor is available at requested time
+                if not profile.is_available_at(requested_time):
+                    raise serializers.ValidationError({
+                        'requested_time': (
+                            f"This mentor is not available at the requested time. "
+                            f"Please check their availability calendar and choose an available slot."
+                        )
+                    })
+                
+                # Check if slot is already booked
+                existing_session = Session.objects.filter(
+                    mentor=mentor_user,
+                    requested_time=requested_time,
+                    status__in=['pending', 'accepted']
+                ).exists()
+                
+                if existing_session:
+                    raise serializers.ValidationError({
+                        'requested_time': 'This time slot is already booked. Please choose another time.'
+                    })
+                
+            except (User.DoesNotExist, MentorProfile.DoesNotExist):
+                pass  # Already validated in validate_mentor_id
+        
+        return data
 
     def create(self, validated_data):
         mentor_id = validated_data.pop('mentor_id')
@@ -297,6 +386,41 @@ class AuditLogSerializer(serializers.ModelSerializer):
             'id', 'action', 'detail', 'created_at',
             'admin_username', 'target_username', 'target_id',
         )
+
+
+# ─────────────────────────────────────────────
+# Mentor Favorites
+# ─────────────────────────────────────────────
+class MentorFavoriteSerializer(serializers.ModelSerializer):
+    mentor_username = serializers.CharField(source='mentor.username', read_only=True)
+    mentor_profile = serializers.SerializerMethodField()
+
+    class Meta:
+        model = MentorFavorite
+        fields = ('id', 'mentor_username', 'mentor_profile', 'created_at')
+        read_only_fields = ('id', 'created_at')
+
+    def get_mentor_profile(self, obj):
+        try:
+            profile = obj.mentor.mentor_profile
+            return {
+                'id': profile.id,
+                'field_of_study': profile.field_of_study,
+                'university': profile.university,
+                'average_rating': profile.average_rating,
+            }
+        except Exception:
+            return None
+
+
+# ─────────────────────────────────────────────
+# Saved Search
+# ─────────────────────────────────────────────
+class SavedSearchSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SavedSearch
+        fields = ('id', 'name', 'filters', 'created_at', 'updated_at')
+        read_only_fields = ('id', 'created_at', 'updated_at')
 class AdminUserListSerializer(serializers.ModelSerializer):
     mentor_profile = serializers.SerializerMethodField()
 
@@ -378,3 +502,78 @@ class AdminUserDetailSerializer(serializers.ModelSerializer):
         if obj.role == 'student':
             return Review.objects.filter(session__student=obj).count()
         return Review.objects.filter(session__mentor=obj).count()
+
+
+# ─────────────────────────────────────────────
+# Message (Real-time messaging)
+# ─────────────────────────────────────────────
+class MessageSerializer(serializers.ModelSerializer):
+    sender_username = serializers.CharField(source='sender.username', read_only=True)
+    recipient_username = serializers.CharField(source='recipient.username', read_only=True)
+
+    class Meta:
+        model = Message
+        fields = ('id', 'sender_username', 'recipient_username', 'content', 'is_read', 'read_at', 'created_at')
+        read_only_fields = ('id', 'sender_username', 'recipient_username', 'is_read', 'read_at', 'created_at')
+
+
+class MessageDetailSerializer(serializers.ModelSerializer):
+    sender_username = serializers.CharField(source='sender.username', read_only=True)
+    recipient_username = serializers.CharField(source='recipient.username', read_only=True)
+    sender_id = serializers.IntegerField(source='sender.id', read_only=True)
+    recipient_id = serializers.IntegerField(source='recipient.id', read_only=True)
+
+    class Meta:
+        model = Message
+        fields = ('id', 'sender_id', 'sender_username', 'recipient_id', 'recipient_username', 'content', 'is_read', 'read_at', 'created_at')
+        read_only_fields = ('id', 'sender_id', 'sender_username', 'recipient_id', 'recipient_username', 'is_read', 'read_at', 'created_at')
+
+
+class ConversationSerializer(serializers.Serializer):
+    """Serializer for conversation list (unique users)"""
+    user_id = serializers.IntegerField()
+    username = serializers.CharField()
+    unread_count = serializers.IntegerField()
+    last_message = serializers.CharField()
+    last_message_time = serializers.DateTimeField()
+
+
+# ─────────────────────────────────────────────
+# Session Analytics
+# ─────────────────────────────────────────────
+class SessionAnalyticsSerializer(serializers.ModelSerializer):
+    session_id = serializers.IntegerField(source='session.id', read_only=True)
+    student_username = serializers.CharField(source='student.username', read_only=True)
+    mentor_username = serializers.CharField(source='mentor.username', read_only=True)
+
+    class Meta:
+        model = SessionAnalytics
+        fields = (
+            'id', 'session_id', 'student_username', 'mentor_username',
+            'skills_learned', 'goals_achieved', 'satisfaction_rating',
+            'student_engagement', 'mentor_effectiveness',
+            'created_at', 'updated_at'
+        )
+        read_only_fields = ('id', 'session_id', 'student_username', 'mentor_username', 'created_at')
+
+
+class StudentAnalyticsSerializer(serializers.Serializer):
+    """Student analytics dashboard data"""
+    total_hours = serializers.FloatField()
+    total_sessions = serializers.IntegerField()
+    completed_sessions = serializers.IntegerField()
+    unique_mentors = serializers.IntegerField()
+    average_satisfaction = serializers.FloatField()
+    skills_learned = serializers.ListField(child=serializers.CharField())
+    total_goals_achieved = serializers.IntegerField()
+
+
+class MentorAnalyticsSerializer(serializers.Serializer):
+    """Mentor analytics dashboard data"""
+    total_hours = serializers.FloatField()
+    total_students = serializers.IntegerField()
+    completed_sessions = serializers.IntegerField()
+    average_rating = serializers.FloatField()
+    average_student_engagement = serializers.FloatField()
+    average_effectiveness = serializers.FloatField()
+    topics_covered = serializers.ListField(child=serializers.CharField())

@@ -15,6 +15,11 @@ from .views import (
     AdminSessionListView, AdminSessionCancelView,
     AdminReportListView, AdminReportResolveView, AdminReportDismissView,
     AdminAuditLogView,
+    MentorFavoriteListView, MentorFavoriteToggleView,
+    SavedSearchListCreateView, SavedSearchDetailView,
+    MentorAvailabilityView,
+    MessageListCreateView, ConversationListView, MessageMarkAsReadView, UnreadMessageCountView,
+    SessionAnalyticsDetailView, StudentAnalyticsView, MentorAnalyticsView,
 )
 
 urlpatterns = [
@@ -29,6 +34,7 @@ urlpatterns = [
     path('mentors/me/',                   MentorMeView.as_view(),           name='mentor-me'),
     path('mentors/<int:pk>/',             MentorDetailView.as_view(),       name='mentor-detail'),
     path('mentors/<int:pk>/reviews/',     MentorReviewListView.as_view(),   name='mentor-reviews'),
+    path('mentors/<int:pk>/availability/', MentorAvailabilityView.as_view(), name='mentor-availability'),
 
     # ── Admin — Mentor Management ──────────────────────────────────────────
     path('admin/mentors/',                      AdminMentorListView.as_view(),   name='admin-mentor-list'),
@@ -81,4 +87,23 @@ urlpatterns = [
     # ── Admin Settings ─────────────────────────────────────────────────────
     path('admin/settings/',                     AdminPlatformSettingsView.as_view(),     name='admin-settings'),
     path('admin/notification-settings/',        AdminNotificationSettingsView.as_view(), name='admin-notification-settings'),
+    
+    # ── Mentor Favorites ───────────────────────────────────────────────────
+    path('favorites/',                          MentorFavoriteListView.as_view(),        name='favorite-list'),
+    path('favorites/<int:mentor_id>/toggle/',   MentorFavoriteToggleView.as_view(),      name='favorite-toggle'),
+    
+    # ── Saved Searches ─────────────────────────────────────────────────────
+    path('saved-searches/',                     SavedSearchListCreateView.as_view(),     name='saved-search-list-create'),
+    path('saved-searches/<int:pk>/',            SavedSearchDetailView.as_view(),         name='saved-search-detail'),
+    
+    # ── Real-Time Messaging (Phase 3) ──────────────────────────────────────
+    path('messages/',                           MessageListCreateView.as_view(),         name='message-list-create'),
+    path('conversations/',                      ConversationListView.as_view(),          name='conversation-list'),
+    path('messages/<int:pk>/read/',             MessageMarkAsReadView.as_view(),         name='message-mark-read'),
+    path('messages/unread-count/',              UnreadMessageCountView.as_view(),        name='unread-count'),
+    
+    # ── Session Analytics (Phase 3) ────────────────────────────────────────
+    path('analytics/sessions/<int:pk>/',        SessionAnalyticsDetailView.as_view(),    name='session-analytics-detail'),
+    path('analytics/student/',                  StudentAnalyticsView.as_view(),          name='student-analytics'),
+    path('analytics/mentor/',                   MentorAnalyticsView.as_view(),           name='mentor-analytics'),
 ]

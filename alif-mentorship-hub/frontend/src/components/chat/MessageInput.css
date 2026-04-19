@@ -1,0 +1,145 @@
+.message-input-form {
+  padding: 16px;
+  background: white;
+  border-top: 1px solid #CCFBF1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.message-input-container {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+
+.message-input {
+  flex: 1;
+  padding: 12px;
+  border: 1px solid #CCFBF1;
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  resize: none;
+  max-height: 120px;
+  min-height: 44px;
+  color: #134E4A;
+  background: #F0FDF9;
+  transition: all 0.2s ease;
+}
+
+.message-input:focus {
+  outline: none;
+  border-color: #0D9488;
+  background: white;
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.1);
+}
+
+.message-input::placeholder {
+  color: #0F766E;
+  opacity: 0.5;
+}
+
+.message-input:disabled {
+  background: #F0FDF9;
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.send-button {
+  padding: 12px 24px;
+  background: #0D9488;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  font-family: 'Plus Jakarta Sans', sans-serif;
+  transition: all 0.2s ease;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.send-button:hover:not(:disabled) {
+  background: #0F766E;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(13, 148, 136, 0.3);
+}
+
+.send-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.send-button:disabled {
+  background: #CCFBF1;
+  color: #0F766E;
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.sending {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sending::after {
+  content: '';
+  width: 4px;
+  height: 4px;
+  background: currentColor;
+  border-radius: 50%;
+  animation: dots 1.4s infinite;
+}
+
+@keyframes dots {
+  0%, 20%, 50%, 80%, 100% {
+    opacity: 1;
+  }
+  40% {
+    opacity: 0.5;
+  }
+  60% {
+    opacity: 0.3;
+  }
+}
+
+.character-count {
+  font-size: 12px;
+  color: #0F766E;
+  opacity: 0.5;
+  text-align: right;
+}
+
+/* Mobile Responsive */
+@media (max-width: 768px) {
+  .message-input-form {
+    padding: 12px;
+    gap: 6px;
+  }
+
+  .message-input-container {
+    gap: 6px;
+  }
+
+  .message-input {
+    padding: 10px;
+    font-size: 13px;
+    min-height: 40px;
+  }
+
+  .send-button {
+    padding: 10px 16px;
+    font-size: 13px;
+    min-height: 40px;
+  }
+
+  .character-count {
+    font-size: 11px;
+  }
+}
