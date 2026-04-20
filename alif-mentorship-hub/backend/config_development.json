@@ -1,0 +1,84 @@
+{
+  "api_endpoints": {
+    "version": "v1",
+    "base_path": "/api",
+    "auth_endpoints": {
+      "login": "/api/v1/auth/login/",
+      "register": "/api/v1/auth/register/",
+      "refresh": "/api/v1/auth/refresh/",
+      "logout": "/api/v1/auth/logout/",
+      "profile": "/api/v1/auth/profile/"
+    },
+    "user_endpoints": {
+      "mentors": "/api/v1/mentors/",
+      "students": "/api/v1/students/",
+      "applications": "/api/v1/applications/"
+    },
+    "session_endpoints": {
+      "sessions": "/api/v1/sessions/",
+      "reviews": "/api/v1/reviews/",
+      "messages": "/api/v1/messages/"
+    }
+  },
+  "frontend": {
+    "base_url": "http://localhost:5173",
+    "api_timeout": 30000,
+    "retry_attempts": 3,
+    "cache_duration": 300000,
+    "supported_file_types": [
+      "image/jpeg",
+      "image/png",
+      "image/gif",
+      "application/pdf",
+      "text/plain",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    ],
+    "max_file_size": 5242880
+  },
+  "security": {
+    "cors_origins": [
+      "http://localhost:5173",
+      "http://127.0.0.1:5173"
+    ],
+    "csrf_trusted_origins": [
+      "http://localhost:5173",
+      "http://127.0.0.1:5173"
+    ],
+    "allowed_hosts": [
+      "localhost",
+      "127.0.0.1"
+    ],
+    "rate_limits": {
+      "anon": "100/hour",
+      "user": "1000/hour",
+      "login": "5/minute",
+      "register": "3/minute"
+    },
+    "jwt_expiry": 3600,
+    "refresh_expiry": 604800
+  },
+  "database": {
+    "engine": "django.db.backends.sqlite3",
+    "name": "db.sqlite3",
+    "host": "",
+    "port": "",
+    "user": "",
+    "password": "",
+    "options": {}
+  },
+  "features": {
+    "messaging_enabled": true,
+    "file_upload_enabled": true,
+    "notifications_enabled": true,
+    "analytics_enabled": false,
+    "caching_enabled": true,
+    "rate_limiting_enabled": true
+  },
+  "integrations": {
+    "email_service": "smtp",
+    "storage_service": "local",
+    "monitoring_service": null,
+    "analytics_service": null
+  }
+}

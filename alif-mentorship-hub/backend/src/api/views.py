@@ -1,9 +1,13 @@
-from django.db.models import Q
+import logging
+from django.db.models import Q, Count, Avg, Prefetch
 from django.utils import timezone
+from django.db import transaction
+from django.core.cache import cache
 from rest_framework import generics, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import User, MentorProfile, Session, Review, StudentFeedback, Resource, Report, AuditLog, PlatformSettings, AdminNotificationSettings, MentorFavorite, SavedSearch, Message, SessionAnalytics
@@ -20,6 +24,10 @@ from .serializers import (
 )
 from .permissions import IsStudent, IsMentor, IsAdmin
 from .audit import create_audit_log
+from .utils import (
+    get_optimized_mentor_queryset, get_mentor_with_stats, invalidate_mentor_cache,
+    safe_float_conversion, safe_int_conversion, validate_search_string
+)
 from .email import (
     send_session_request_notification,
     send_session_accepted_notification,
@@ -29,85 +37,203 @@ from .email import (
     send_report_resolved_notification,
     send_session_cancelled_notification,
 )
+from .secure_logging import get_secure_logger, log_user_action, log_error_safely, security_logger
+from .error_handling import (
+    ErrorHandlingMixin, ErrorCode, ErrorResponseBuilder, 
+    raise_business_error, raise_resource_conflict, EnterpriseAPIException
+)
+from .input_sanitization import InputSanitizer, SecureValidationMixin, sanitize_request_data
+from .database_optimization import DatabaseOptimizer, QueryOptimizer
+
+# Setup secure logging
+logger = get_secure_logger('api')
 
 
 # ─────────────────────────────────────────────
 # Auth
 # ─────────────────────────────────────────────
-class RegisterView(generics.CreateAPIView):
+class RegisterView(generics.CreateAPIView, ErrorHandlingMixin):
     queryset           = User.objects.all()
     serializer_class   = RegisterSerializer
     permission_classes = [AllowAny]
+    throttle_classes   = [AnonRateThrottle]
 
+    @transaction.atomic
+    @sanitize_request_data(['username', 'password', 'role', 'phone', 'first_name', 'last_name'])
     def create(self, request, *args, **kwargs):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.save()
-        refresh = RefreshToken.for_user(user)
-        return Response({
-            'access':   str(refresh.access_token),
-            'refresh':  str(refresh),
-            'user_id':  user.id,
-            'username': user.username,
-            'role':     user.role,
-        }, status=status.HTTP_201_CREATED)
-
-
-class LoginView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        username = request.data.get('username', '').strip()
-        password = request.data.get('password', '')
-
-        if not username or not password:
-            return Response(
-                {'error': 'Username and password are required.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         try:
-            user = User.objects.get(username=username)
-        except User.DoesNotExist:
-            return Response(
-                {'error': 'Invalid credentials.'},
-                status=status.HTTP_401_UNAUTHORIZED,
+            # Sanitize username
+            username = InputSanitizer.validate_username(request.data.get('username', ''))
+            
+            log_user_action(
+                user_id=None,
+                action='registration_attempt',
+                resource='user',
+                details={'username': username}
+            )
+            
+            serializer = self.get_serializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+            user = serializer.save()
+            refresh = RefreshToken.for_user(user)
+            
+            log_user_action(
+                user_id=user.id,
+                action='registration_success',
+                resource='user',
+                details={'username': user.username, 'role': user.role}
+            )
+            
+            security_logger.log_authentication_attempt(
+                username=user.username,
+                success=True,
+                ip_address=getattr(request, 'client_ip', 'unknown'),
+                user_agent=request.META.get('HTTP_USER_AGENT', 'unknown')
+            )
+            
+            return Response({
+                'success': True,
+                'data': {
+                    'access':   str(refresh.access_token),
+                    'refresh':  str(refresh),
+                    'user_id':  user.id,
+                    'username': user.username,
+                    'role':     user.role,
+                }
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            log_error_safely(logger, "Registration failed", e, user_id=None)
+            
+            if isinstance(e, EnterpriseAPIException):
+                raise
+            
+            return ErrorResponseBuilder.build_error_response(
+                error_code=ErrorCode.INTERNAL_ERROR,
+                message="Registration failed. Please try again.",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                request_id=getattr(request, 'request_id', None)
             )
 
-        if not user.check_password(password):
-            return Response(
-                {'error': 'Invalid credentials.'},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
 
-        if not user.is_active:
-            return Response(
-                {'error': 'This account is disabled.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+class LoginView(APIView, ErrorHandlingMixin):
+    permission_classes = [AllowAny]
+    throttle_classes   = [AnonRateThrottle]
 
-        if user.is_suspended:
-            return Response(
-                {'error': 'Your account has been suspended. Contact support.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+    @sanitize_request_data(['username', 'password'])
+    def post(self, request):
+        try:
+            username = InputSanitizer.validate_username(request.data.get('username', '').strip())
+            password = request.data.get('password', '')
+            
+            if not username or not password:
+                security_logger.log_authentication_attempt(
+                    username=username or 'unknown',
+                    success=False,
+                    ip_address=getattr(request, 'client_ip', 'unknown'),
+                    user_agent=request.META.get('HTTP_USER_AGENT', 'unknown')
+                )
+                
+                return ErrorResponseBuilder.build_error_response(
+                    error_code=ErrorCode.MISSING_REQUIRED_FIELD,
+                    message='Username and password are required.',
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    request_id=getattr(request, 'request_id', None)
+                )
 
-        refresh = RefreshToken.for_user(user)
-        return Response({
-            'access':   str(refresh.access_token),
-            'refresh':  str(refresh),
-            'user_id':  user.id,
-            'username': user.username,
-            'role':     user.role,
-        })
+            try:
+                user = User.objects.get(username=username)
+            except User.DoesNotExist:
+                security_logger.log_authentication_attempt(
+                    username=username,
+                    success=False,
+                    ip_address=getattr(request, 'client_ip', 'unknown'),
+                    user_agent=request.META.get('HTTP_USER_AGENT', 'unknown')
+                )
+                
+                return ErrorResponseBuilder.build_error_response(
+                    error_code=ErrorCode.AUTH_INVALID,
+                    message='Invalid credentials.',
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    request_id=getattr(request, 'request_id', None)
+                )
+
+            if not user.check_password(password):
+                security_logger.log_authentication_attempt(
+                    username=username,
+                    success=False,
+                    ip_address=getattr(request, 'client_ip', 'unknown'),
+                    user_agent=request.META.get('HTTP_USER_AGENT', 'unknown')
+                )
+                
+                return ErrorResponseBuilder.build_error_response(
+                    error_code=ErrorCode.AUTH_INVALID,
+                    message='Invalid credentials.',
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    request_id=getattr(request, 'request_id', None)
+                )
+
+            if not user.is_active:
+                return ErrorResponseBuilder.build_error_response(
+                    error_code=ErrorCode.ACCOUNT_DEACTIVATED,
+                    message='This account is disabled.',
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    request_id=getattr(request, 'request_id', None)
+                )
+
+            if user.is_suspended:
+                return ErrorResponseBuilder.build_error_response(
+                    error_code=ErrorCode.ACCOUNT_SUSPENDED,
+                    message='Your account has been suspended. Contact support.',
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    request_id=getattr(request, 'request_id', None)
+                )
+
+            refresh = RefreshToken.for_user(user)
+            
+            security_logger.log_authentication_attempt(
+                username=username,
+                success=True,
+                ip_address=getattr(request, 'client_ip', 'unknown'),
+                user_agent=request.META.get('HTTP_USER_AGENT', 'unknown')
+            )
+            
+            log_user_action(
+                user_id=user.id,
+                action='login_success',
+                resource='user',
+                details={'username': user.username}
+            )
+            
+            return Response({
+                'success': True,
+                'data': {
+                    'access':   str(refresh.access_token),
+                    'refresh':  str(refresh),
+                    'user_id':  user.id,
+                    'username': user.username,
+                    'role':     user.role,
+                }
+            })
+            
+        except Exception as e:
+            log_error_safely(logger, "Login error occurred", e, user_id=None)
+            
+            return ErrorResponseBuilder.build_error_response(
+                error_code=ErrorCode.INTERNAL_ERROR,
+                message='Login failed. Please try again.',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                request_id=getattr(request, 'request_id', None)
+            )
 
 
 # ─────────────────────────────────────────────
 # Mentor Profiles — Public
 # ─────────────────────────────────────────────
-class MentorListView(generics.ListAPIView):
+class MentorListView(generics.ListAPIView, ErrorHandlingMixin):
     serializer_class   = MentorProfileSerializer
     permission_classes = [AllowAny]
+    throttle_classes   = [AnonRateThrottle, UserRateThrottle]
 
     def get_serializer_context(self):
         context = super().get_serializer_context()
@@ -115,64 +241,119 @@ class MentorListView(generics.ListAPIView):
         return context
 
     def get_queryset(self):
-        qs = MentorProfile.objects.filter(is_verified=True).select_related('user').order_by('-id')
+        try:
+            with DatabaseOptimizer.query_monitor('mentor_list_query'):
+                # Use optimized query from QueryOptimizer
+                qs = QueryOptimizer.optimize_mentor_list_query()
+                
+                # Apply filters with proper validation
+                filters = self._get_validated_filters()
+                qs = self._apply_filters(qs, filters)
+                qs = self._apply_sorting(qs, filters.get('sort'))
+                
+                log_user_action(
+                    user_id=getattr(self.request.user, 'id', None),
+                    action='mentor_list_view',
+                    resource='mentor_profile',
+                    details={'filters_count': len(filters)}
+                )
+                
+                return qs
+            
+        except Exception as e:
+            log_error_safely(logger, "Error in MentorListView.get_queryset", e)
+            # Return empty queryset on error to prevent crashes
+            return MentorProfile.objects.none()
+    
+    def _get_validated_filters(self):
+        """Extract and validate query parameters"""
+        filters = {}
         
-        # Basic filters
-        field      = self.request.query_params.get('field')
-        university = self.request.query_params.get('university')
+        try:
+            # Basic string filters
+            field = self.request.query_params.get('field')
+            if field:
+                filters['field'] = validate_search_string(field, 'field', 100)
+            
+            university = self.request.query_params.get('university')
+            if university:
+                filters['university'] = validate_search_string(university, 'university', 100)
+            
+            language = self.request.query_params.get('language')
+            if language:
+                filters['language'] = validate_search_string(language, 'language', 50)
+            
+            # Numeric filters with validation
+            rating_min = self.request.query_params.get('rating_min')
+            if rating_min:
+                filters['rating_min'] = safe_float_conversion(rating_min, 'rating_min', 0.0, 5.0)
+            
+            experience_min = self.request.query_params.get('experience_min')
+            if experience_min:
+                filters['experience_min'] = safe_int_conversion(experience_min, 'experience_min', 0, 50)
+            
+            reliability_min = self.request.query_params.get('reliability_min')
+            if reliability_min:
+                filters['reliability_min'] = safe_float_conversion(reliability_min, 'reliability_min', 0.0, 100.0)
+            
+            # Boolean filters
+            availability = self.request.query_params.get('availability')
+            if availability:
+                filters['availability'] = availability.lower() == 'true'
+            
+            # Sort parameter
+            sort_by = self.request.query_params.get('sort')
+            if sort_by and sort_by in ['rating', 'reviews', 'experience', 'reliability', 'newest']:
+                filters['sort'] = sort_by
+            
+        except ValueError as e:
+            logger.warning(f"Invalid filter parameter: {str(e)}")
+            # Continue with valid filters, ignore invalid ones
         
-        if field:
-            qs = qs.filter(field_of_study__icontains=field)
-        if university:
-            qs = qs.filter(university__icontains=university)
+        return filters
+    
+    def _apply_filters(self, qs, filters):
+        """Apply validated filters to queryset"""
+        if filters.get('field'):
+            qs = qs.filter(field_of_study__icontains=filters['field'])
         
-        # Advanced filters
-        rating_min = self.request.query_params.get('rating_min')
-        if rating_min:
-            try:
-                qs = qs.filter(average_rating__gte=float(rating_min))
-            except ValueError:
-                pass
+        if filters.get('university'):
+            qs = qs.filter(university__icontains=filters['university'])
         
-        experience_min = self.request.query_params.get('experience_min')
-        if experience_min:
-            try:
-                qs = qs.filter(years_of_experience__gte=int(experience_min))
-            except ValueError:
-                pass
+        if filters.get('language'):
+            qs = qs.filter(languages__contains=filters['language'])
         
-        language = self.request.query_params.get('language')
-        if language:
-            qs = qs.filter(languages__contains=language)
-        
-        availability = self.request.query_params.get('availability')
-        if availability == 'true':
-            # Filter mentors who have availability slots
+        if filters.get('availability'):
             qs = qs.exclude(availability=[])
         
-        reliability_min = self.request.query_params.get('reliability_min')
-        if reliability_min:
-            try:
-                qs = qs.filter(user__reliability_score__gte=float(reliability_min))
-            except ValueError:
-                pass
+        if filters.get('rating_min'):
+            qs = qs.filter(average_rating__gte=filters['rating_min'])
         
-        # Sorting
-        sort_by = self.request.query_params.get('sort')
-        if sort_by == 'rating':
-            qs = qs.order_by('-average_rating', '-id')
-        elif sort_by == 'reviews':
-            # Sort by review count (requires annotation)
-            from django.db.models import Count
-            qs = qs.annotate(review_count=Count('user__sessions_as_mentor__review')).order_by('-review_count', '-id')
-        elif sort_by == 'experience':
-            qs = qs.order_by('-years_of_experience', '-id')
-        elif sort_by == 'reliability':
-            qs = qs.order_by('-user__reliability_score', '-id')
-        elif sort_by == 'newest':
-            qs = qs.order_by('-id')
+        if filters.get('experience_min'):
+            qs = qs.filter(years_of_experience__gte=filters['experience_min'])
+        
+        if filters.get('reliability_min'):
+            qs = qs.filter(user__reliability_score__gte=filters['reliability_min'])
         
         return qs
+    
+    def _apply_sorting(self, qs, sort_by):
+        """Apply sorting to queryset"""
+        if sort_by == 'rating':
+            return qs.order_by('-average_rating', '-id')
+        elif sort_by == 'reviews':
+            # Use annotation to avoid N+1 queries
+            return qs.annotate(
+                review_count=Count('user__sessions_as_mentor__review')
+            ).order_by('-review_count', '-id')
+        elif sort_by == 'experience':
+            return qs.order_by('-years_of_experience', '-id')
+        elif sort_by == 'reliability':
+            return qs.order_by('-user__reliability_score', '-id')
+        elif sort_by == 'newest':
+            return qs.order_by('-id')
+        else:
+            return qs.order_by('-id')
 
 
 class MentorDetailView(generics.RetrieveAPIView):
@@ -285,6 +466,8 @@ VALID_TRANSITIONS = {
 
 
 class SessionListCreateView(generics.ListCreateAPIView):
+    throttle_classes = [UserRateThrottle]
+    
     def get_permissions(self):
         if self.request.method == 'POST':
             return [IsStudent()]
@@ -296,29 +479,58 @@ class SessionListCreateView(generics.ListCreateAPIView):
         return SessionDetailSerializer
 
     def get_queryset(self):
-        user = self.request.user
-        qs = Session.objects.select_related('student', 'mentor').order_by('-created_at')
-        if user.role == 'student':
-            qs = qs.filter(student=user)
-        elif user.role == 'mentor':
-            qs = qs.filter(mentor=user)
-        status_filter = self.request.query_params.get('status')
-        if status_filter:
-            qs = qs.filter(status=status_filter)
-        return qs
+        try:
+            user = self.request.user
+            # Optimized queryset with proper prefetching
+            qs = Session.objects.select_related(
+                'student', 'mentor', 'mentor__mentor_profile'
+            ).prefetch_related(
+                'review', 'report', 'student_feedback'
+            ).order_by('-created_at')
+            
+            if user.role == 'student':
+                qs = qs.filter(student=user)
+            elif user.role == 'mentor':
+                qs = qs.filter(mentor=user)
+            
+            # Apply status filter with validation
+            status_filter = self.request.query_params.get('status')
+            if status_filter and status_filter in ['pending', 'accepted', 'declined', 'completed', 'cancelled']:
+                qs = qs.filter(status=status_filter)
+            
+            logger.info(f"SessionListView query for user {user.username} ({user.role})")
+            return qs
+            
+        except Exception as e:
+            logger.error(f"Error in SessionListCreateView.get_queryset: {str(e)}")
+            return Session.objects.none()
 
+    @transaction.atomic
     def perform_create(self, serializer):
-        # Check if user is restricted
-        if self.request.user.is_restricted():
-            from rest_framework.exceptions import PermissionDenied
-            restriction_end = self.request.user.restriction_until.strftime('%B %d, %Y at %I:%M %p')
-            raise PermissionDenied(
-                f"Your account is temporarily restricted from booking sessions until {restriction_end} "
-                f"due to multiple cancellations or no-shows. Please contact support if you believe this is an error."
-            )
-        
-        session = serializer.save(student=self.request.user)
-        send_session_request_notification(session)
+        try:
+            # Check if user is restricted
+            if self.request.user.is_restricted():
+                from rest_framework.exceptions import PermissionDenied
+                restriction_end = self.request.user.restriction_until.strftime('%B %d, %Y at %I:%M %p')
+                logger.warning(f"Restricted user {self.request.user.username} attempted to book session")
+                raise PermissionDenied(
+                    f"Your account is temporarily restricted from booking sessions until {restriction_end} "
+                    f"due to multiple cancellations or no-shows. Please contact support if you believe this is an error."
+                )
+            
+            session = serializer.save(student=self.request.user)
+            logger.info(f"Session created: {session.id} by {self.request.user.username}")
+            
+            # Send notification (wrapped in try-catch to prevent transaction rollback)
+            try:
+                send_session_request_notification(session)
+            except Exception as e:
+                logger.error(f"Failed to send session notification: {str(e)}")
+                # Don't fail the transaction for notification errors
+                
+        except Exception as e:
+            logger.error(f"Session creation failed: {str(e)}")
+            raise
 
 
 class SessionDetailView(generics.RetrieveUpdateAPIView):
@@ -352,38 +564,85 @@ class SessionDetailView(generics.RetrieveUpdateAPIView):
 
 class SessionAcceptView(APIView):
     permission_classes = [IsMentor]
+    throttle_classes   = [UserRateThrottle]
 
+    @transaction.atomic
     def post(self, request, pk):
         try:
-            session = Session.objects.get(pk=pk, mentor=request.user)
+            session = Session.objects.select_related('student', 'mentor').get(pk=pk, mentor=request.user)
         except Session.DoesNotExist:
+            logger.warning(f"Session {pk} not found for mentor {request.user.username}")
             return Response({'error': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
-        if 'accepted' not in VALID_TRANSITIONS.get(session.status, []):
-            return Response({'error': f"Cannot accept a session with status '{session.status}'."}, status=status.HTTP_400_BAD_REQUEST)
-        meet_link = request.data.get('meet_link', '').strip()
-        if not meet_link:
-            return Response({'error': 'meet_link is required when accepting a session.'}, status=status.HTTP_400_BAD_REQUEST)
-        session.status    = 'accepted'
-        session.meet_link = meet_link
-        session.save(update_fields=['status', 'meet_link'])
-        send_session_accepted_notification(session)
-        return Response(SessionDetailSerializer(session).data)
+        
+        try:
+            if 'accepted' not in VALID_TRANSITIONS.get(session.status, []):
+                logger.warning(f"Invalid transition attempt: {session.status} -> accepted for session {pk}")
+                return Response(
+                    {'error': f"Cannot accept a session with status '{session.status}'."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            meet_link = request.data.get('meet_link', '').strip()
+            if not meet_link:
+                return Response(
+                    {'error': 'meet_link is required when accepting a session.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            session.status = 'accepted'
+            session.meet_link = meet_link
+            session.save(update_fields=['status', 'meet_link'])
+            
+            logger.info(f"Session {pk} accepted by mentor {request.user.username}")
+            
+            # Send notification (don't fail transaction if notification fails)
+            try:
+                send_session_accepted_notification(session)
+            except Exception as e:
+                logger.error(f"Failed to send acceptance notification: {str(e)}")
+            
+            return Response(SessionDetailSerializer(session).data)
+            
+        except Exception as e:
+            logger.error(f"Error accepting session {pk}: {str(e)}")
+            raise
 
 
 class SessionDeclineView(APIView):
     permission_classes = [IsMentor]
+    throttle_classes   = [UserRateThrottle]
 
+    @transaction.atomic
     def post(self, request, pk):
         try:
-            session = Session.objects.get(pk=pk, mentor=request.user)
+            session = Session.objects.select_related('student', 'mentor').get(pk=pk, mentor=request.user)
         except Session.DoesNotExist:
+            logger.warning(f"Session {pk} not found for mentor {request.user.username}")
             return Response({'error': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
-        if 'declined' not in VALID_TRANSITIONS.get(session.status, []):
-            return Response({'error': f"Cannot decline a session with status '{session.status}'."}, status=status.HTTP_400_BAD_REQUEST)
-        session.status = 'declined'
-        session.save(update_fields=['status'])
-        send_session_declined_notification(session)
-        return Response(SessionDetailSerializer(session).data)
+        
+        try:
+            if 'declined' not in VALID_TRANSITIONS.get(session.status, []):
+                logger.warning(f"Invalid transition attempt: {session.status} -> declined for session {pk}")
+                return Response(
+                    {'error': f"Cannot decline a session with status '{session.status}'."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            session.status = 'declined'
+            session.save(update_fields=['status'])
+            
+            logger.info(f"Session {pk} declined by mentor {request.user.username}")
+            
+            try:
+                send_session_declined_notification(session)
+            except Exception as e:
+                logger.error(f"Failed to send decline notification: {str(e)}")
+            
+            return Response(SessionDetailSerializer(session).data)
+            
+        except Exception as e:
+            logger.error(f"Error declining session {pk}: {str(e)}")
+            raise
 
 
 class SessionCompleteView(APIView):

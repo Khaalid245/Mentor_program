@@ -1,0 +1,16 @@
+asgiref==3.10.0
+Django==5.2.7
+django-cors-headers==4.9.0
+djangorestframework==3.16.1
+djangorestframework_simplejwt==5.5.1
+mysqlclient==2.2.7
+PyJWT==2.10.1
+python-dotenv==1.1.1
+sqlparse==0.5.3
+tzdata==2025.2
+gunicorn
+pymysql
+cryptography
+django-ratelimit==4.1.0
+redis==5.2.1
+django-redis==5.4.0

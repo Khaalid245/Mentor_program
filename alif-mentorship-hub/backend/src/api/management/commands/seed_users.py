@@ -1,6 +1,8 @@
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 from api.models import User, MentorProfile, Session, Review, Resource
+from api.secrets import secrets_manager
+import os
 
 
 class Command(BaseCommand):
@@ -8,21 +10,39 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         self.stdout.write("\n── Seeding test users ──────────────────────────────")
+        
+        # Get secure passwords from environment or generate them
+        admin_password = secrets_manager.get_secret('SEED_ADMIN_PASSWORD', required=False)
+        mentor_password = secrets_manager.get_secret('SEED_MENTOR_PASSWORD', required=False)
+        student_password = secrets_manager.get_secret('SEED_STUDENT_PASSWORD', required=False)
+        
+        # If not provided, generate secure passwords
+        if not admin_password:
+            admin_password = secrets_manager.generate_secure_password()
+            self.stdout.write(self.style.WARNING(f"Generated admin password: {admin_password}"))
+        
+        if not mentor_password:
+            mentor_password = secrets_manager.generate_secure_password()
+            self.stdout.write(self.style.WARNING(f"Generated mentor password: {mentor_password}"))
+        
+        if not student_password:
+            student_password = secrets_manager.generate_secure_password()
+            self.stdout.write(self.style.WARNING(f"Generated student password: {student_password}"))
 
         # ── Admin ─────────────────────────────────────────────────────────────
         admin = self._create_user(
             username="admin",
-            password="Admin1234!",
+            password=admin_password,
             role="admin",
             email="admin@alifhub.so",
             phone="0611000001",
         )
-        self.stdout.write(self.style.SUCCESS(f"  ✓ Admin     → username: admin       / password: Admin1234!"))
+        self.stdout.write(self.style.SUCCESS(f"  ✓ Admin     → username: admin       / password: [SECURE]"))
 
         # ── Mentors ───────────────────────────────────────────────────────────
         mentor1 = self._create_user(
             username="mentor_amina",
-            password="Mentor1234!",
+            password=mentor_password,
             role="mentor",
             email="amina@alifhub.so",
             phone="0611000002",
@@ -45,11 +65,11 @@ class Command(BaseCommand):
             ],
             is_verified=True,
         )
-        self.stdout.write(self.style.SUCCESS(f"  ✓ Mentor 1  → username: mentor_amina / password: Mentor1234! (verified)"))
+        self.stdout.write(self.style.SUCCESS(f"  ✓ Mentor 1  → username: mentor_amina / password: [SECURE] (verified)"))
 
         mentor2 = self._create_user(
             username="mentor_hassan",
-            password="Mentor1234!",
+            password=mentor_password,
             role="mentor",
             email="hassan@alifhub.so",
             phone="0611000003",
@@ -71,26 +91,26 @@ class Command(BaseCommand):
             ],
             is_verified=False,  # pending — admin must verify
         )
-        self.stdout.write(self.style.WARNING(f"  ✓ Mentor 2  → username: mentor_hassan / password: Mentor1234! (pending verification)"))
+        self.stdout.write(self.style.WARNING(f"  ✓ Mentor 2  → username: mentor_hassan / password: [SECURE] (pending verification)"))
 
         # ── Students ──────────────────────────────────────────────────────────
         student1 = self._create_user(
             username="student_fadumo",
-            password="Student1234!",
+            password=student_password,
             role="student",
             email="fadumo@alifhub.so",
             phone="0611000004",
         )
-        self.stdout.write(self.style.SUCCESS(f"  ✓ Student 1 → username: student_fadumo / password: Student1234!"))
+        self.stdout.write(self.style.SUCCESS(f"  ✓ Student 1 → username: student_fadumo / password: [SECURE]"))
 
         student2 = self._create_user(
             username="student_omar",
-            password="Student1234!",
+            password=student_password,
             role="student",
             email="omar@alifhub.so",
             phone="0611000005",
         )
-        self.stdout.write(self.style.SUCCESS(f"  ✓ Student 2 → username: student_omar  / password: Student1234!"))
+        self.stdout.write(self.style.SUCCESS(f"  ✓ Student 2 → username: student_omar  / password: [SECURE]"))
 
         # ── Sample session (student1 → mentor1, completed with review) ────────
         self._create_sample_session(student1, mentor1, student2)
@@ -98,11 +118,14 @@ class Command(BaseCommand):
         self.stdout.write("\n── Summary ─────────────────────────────────────────")
         self.stdout.write("  Role     Username           Password")
         self.stdout.write("  ──────── ────────────────── ────────────")
-        self.stdout.write("  admin    admin              Admin1234!")
-        self.stdout.write("  mentor   mentor_amina       Mentor1234!  (verified)")
-        self.stdout.write("  mentor   mentor_hassan      Mentor1234!  (needs admin verification)")
-        self.stdout.write("  student  student_fadumo     Student1234!")
-        self.stdout.write("  student  student_omar       Student1234!")
+        self.stdout.write("  admin    admin              [SECURE - Check logs above]")
+        self.stdout.write("  mentor   mentor_amina       [SECURE - Check logs above]")
+        self.stdout.write("  mentor   mentor_hassan      [SECURE - Check logs above]")
+        self.stdout.write("  student  student_fadumo     [SECURE - Check logs above]")
+        self.stdout.write("  student  student_omar       [SECURE - Check logs above]")
+        self.stdout.write("\n  ⚠️  IMPORTANT: Passwords are generated securely and shown above.")
+        self.stdout.write("  💡 TIP: Set SEED_ADMIN_PASSWORD, SEED_MENTOR_PASSWORD, SEED_STUDENT_PASSWORD")
+        self.stdout.write("          in your .env file to use custom passwords.")
         self.stdout.write("\n  Login at: http://localhost:5173/login")
         self.stdout.write("  Admin panel: http://localhost:8000/admin/\n")
 

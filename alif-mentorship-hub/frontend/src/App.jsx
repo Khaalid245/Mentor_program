@@ -1,4 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { ConfigProvider } from "./hooks/useConfig.js";
 import Navbar from "./components/Navbar";
 import Footer from "./components/Footer";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -27,38 +28,42 @@ const Layout = ({ children }) => {
 };
 
 const App = () => (
-  <Router basename="/">
-    <Layout>
-      <Routes>
-        {/* Public */}
-        <Route path="/"        element={<Navigate to="/login" replace />} />
-        <Route path="/login"   element={<Login />} />
-        <Route path="/signup"  element={<Signup />} />
-        <Route path="/about"   element={<About />} />
-        <Route path="/contact" element={<Contact />} />
+  <ErrorBoundary>
+    <ConfigProvider>
+      <Router basename="/">
+        <Layout>
+          <Routes>
+            {/* Public */}
+            <Route path="/"        element={<Navigate to="/login" replace />} />
+            <Route path="/login"   element={<Login />} />
+            <Route path="/signup"  element={<Signup />} />
+            <Route path="/about"   element={<About />} />
+            <Route path="/contact" element={<Contact />} />
 
-        {/* Protected */}
-        <Route path="/student/dashboard" element={
-          <ProtectedRoute role="student">
-            <ErrorBoundary><StudentDashboard /></ErrorBoundary>
-          </ProtectedRoute>
-        } />
-        <Route path="/mentor/dashboard" element={
-          <ProtectedRoute role="mentor">
-            <ErrorBoundary><MentorDashboard /></ErrorBoundary>
-          </ProtectedRoute>
-        } />
-        <Route path="/admin/dashboard" element={
-          <ProtectedRoute role="admin">
-            <ErrorBoundary><AdminDashboard /></ErrorBoundary>
-          </ProtectedRoute>
-        } />
+            {/* Protected */}
+            <Route path="/student/dashboard" element={
+              <ProtectedRoute role="student">
+                <ErrorBoundary><StudentDashboard /></ErrorBoundary>
+              </ProtectedRoute>
+            } />
+            <Route path="/mentor/dashboard" element={
+              <ProtectedRoute role="mentor">
+                <ErrorBoundary><MentorDashboard /></ErrorBoundary>
+              </ProtectedRoute>
+            } />
+            <Route path="/admin/dashboard" element={
+              <ProtectedRoute role="admin">
+                <ErrorBoundary><AdminDashboard /></ErrorBoundary>
+              </ProtectedRoute>
+            } />
 
-        {/* Catch-all */}
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
-    </Layout>
-  </Router>
+            {/* Catch-all */}
+            <Route path="*" element={<Navigate to="/login" replace />} />
+          </Routes>
+        </Layout>
+      </Router>
+    </ConfigProvider>
+  </ErrorBoundary>
 );
 
 export default App;
